@@ -1,0 +1,6 @@
+Training to directly convert from any res to 7T
+- MSE seems to be good for 0.1 but becomes to blurry the images at the end
+- do not mask the latents becuase you loose details and global ilumination
+- best apoch around 5000 then starts to decrease and become blurry
+- 0.1 is better predicted when trained with higer resolutions as input x = [0.1, 1.5, 3, 5] better than [0.1] only
+- same for 5T, maybe is the the amount of data

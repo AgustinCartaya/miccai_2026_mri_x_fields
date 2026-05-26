@@ -1,0 +1,58 @@
+# Ignorar imágenes y datos volumétricos
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.nii.gz
+*.nii
+*.npy
+*.npz
+*.zip
+*.lta
+*.git
+*.mgz
+*.stl
+
+
+# Ignorar archivos de modelos y pesos
+*.safetensors
+*.pkl
+*.bin
+*.pt
+*.h5
+*.pth
+*.ckpt
+*events.out.tfevents*
+# visual studio
+*.pyc
+
+# Ignore jsons an csv
+*.csv
+*.json
+
+# ignore torrents
+*.torrent
+
+*.pdf
+
+# ignore licenses
+# **/license.txt
+
+# **/diffputer/DiffPuter
+**/__pycache__
+data/
+# data/2D
+# data/3D
+# data/MNI_template
+# data/3D/NACC
+
+preprocessing/test_preprocessing/results/fastsurfer/*
+
+# meshes
+*.obj
+.html
+experiments/bgraph/experiments/mesh_creation/outputs/fastsurfer_meshes/*
+experiments/bgraph/preprocessing/test_preprocessing/results/*
+experiments/maisiv2/NV-Generate-CTMR/*
+*license.txt
