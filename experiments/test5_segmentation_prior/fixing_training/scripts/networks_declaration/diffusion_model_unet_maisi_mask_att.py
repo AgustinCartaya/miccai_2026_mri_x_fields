@@ -134,7 +134,6 @@ class DiffusionModelUNetMaisi(nn.Module):
         include_top_region_index_input: bool = False,
         include_bottom_region_index_input: bool = False,
         include_spacing_input: bool = False,
-        # include_mask_conditioning: bool = False,
     ) -> None:
         # print("instantiating DiffusionModelUNetMaisi")
         super().__init__()
@@ -225,7 +224,6 @@ class DiffusionModelUNetMaisi(nn.Module):
         self.include_top_region_index_input = include_top_region_index_input
         self.include_bottom_region_index_input = include_bottom_region_index_input
         self.include_spacing_input = include_spacing_input
-        # self.include_mask_conditioning = include_mask_conditioning
 
         new_time_embed_dim = time_embed_dim
         # print(f"dif unet maisi, new_time_embed_dim: {new_time_embed_dim}")
@@ -365,33 +363,6 @@ class DiffusionModelUNetMaisi(nn.Module):
             ),
         )
 
-        # if self.include_mask_conditioning:
-        #     self.mask_down_projectors = nn.ModuleList()
-        #     for i in range(len(num_channels)):
-        #         self.mask_down_projectors.append(
-        #             Convolution(
-        #                 spatial_dims=spatial_dims,
-        #                 in_channels=num_channels[i],
-        #                 out_channels=num_channels[i],
-        #                 strides=1,
-        #                 kernel_size=1,
-        #                 act="PRELU",
-        #                 norm="INSTANCE",
-        #             )
-        #         )
-        #     self.mask_mid_projector = Convolution(
-        #         spatial_dims=spatial_dims,
-        #         in_channels=num_channels[-1],
-        #         out_channels=num_channels[-1],
-        #         strides=1,
-        #         kernel_size=1,
-        #         act="PRELU",
-        #         norm="INSTANCE",
-        #     )
-
-
-        self.new_time_embed_dim = new_time_embed_dim
-
     def _create_embedding_module(self, input_dim, embed_dim):
         model = nn.Sequential(nn.Linear(input_dim, embed_dim), nn.SiLU(), nn.Linear(embed_dim, embed_dim))
         return model
@@ -425,48 +396,13 @@ class DiffusionModelUNetMaisi(nn.Module):
             emb = torch.cat((emb, _emb), dim=1)
         return emb
 
-    # def _apply_down_blocks(self, h, emb, context, down_block_additional_residuals):
-    #     if context is not None and self.with_conditioning is False:
-    #         raise ValueError("model should have with_conditioning = True if context is provided")
-    #     down_block_res_samples: list[torch.Tensor] = [h]
-    #     for downsample_block in self.down_blocks:
-    #         h, res_samples = downsample_block(hidden_states=h, temb=emb, context=context)
-    #         down_block_res_samples.extend(res_samples)
-
-    #     # Additional residual conections for Controlnets
-    #     if down_block_additional_residuals is not None:
-    #         new_down_block_res_samples: list[torch.Tensor] = []
-    #         for down_block_res_sample, down_block_additional_residual in zip(
-    #             down_block_res_samples, down_block_additional_residuals
-    #         ):
-    #             down_block_res_sample += down_block_additional_residual
-    #             new_down_block_res_samples.append(down_block_res_sample)
-
-    #         down_block_res_samples = new_down_block_res_samples
-    #     return h, down_block_res_samples
-
-
-
-    def _apply_down_blocks(self, h, emb, context, down_block_additional_residuals, mask_down_features=None):
+    def _apply_down_blocks(self, h, emb, context, down_block_additional_residuals):
         if context is not None and self.with_conditioning is False:
             raise ValueError("model should have with_conditioning = True if context is provided")
         down_block_res_samples: list[torch.Tensor] = [h]
-        for i, downsample_block in enumerate(self.down_blocks):
-
-            # # # inject mask feature at matching level option 2
-            # if mask_down_features is not None and i < len(mask_down_features):
-            #     h = h + mask_down_features[i]
-
+        for downsample_block in self.down_blocks:
             h, res_samples = downsample_block(hidden_states=h, temb=emb, context=context)
             down_block_res_samples.extend(res_samples)
-
-            # inject mask feature at matching level option 1
-            if mask_down_features is not None and i < len(mask_down_features):
-                h = h + mask_down_features[i]
-
-        # # # inject mask feature at matching level option 2
-        # if mask_down_features is not None:
-        #     h = h + mask_down_features[-1]
 
         # Additional residual conections for Controlnets
         if down_block_additional_residuals is not None:
@@ -479,11 +415,6 @@ class DiffusionModelUNetMaisi(nn.Module):
 
             down_block_res_samples = new_down_block_res_samples
         return h, down_block_res_samples
-
-
-
-
-
 
     def _apply_up_blocks(self, h, emb, context, down_block_res_samples):
         for upsample_block in self.up_blocks:
@@ -504,9 +435,6 @@ class DiffusionModelUNetMaisi(nn.Module):
         top_region_index_tensor: torch.Tensor | None = None,
         bottom_region_index_tensor: torch.Tensor | None = None,
         spacing_tensor: torch.Tensor | None = None,
-        mask_features: list[torch.Tensor] | None = None,
-        modallity_embedding: torch.Tensor | None = None,
-        resolution_embedding: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Forward pass through the UNet model.
@@ -528,23 +456,11 @@ class DiffusionModelUNetMaisi(nn.Module):
 
         emb = self._get_time_and_class_embedding(x, timesteps, class_labels) # class labels no se usa
         emb = self._get_input_embeddings(emb, top_region_index_tensor, bottom_region_index_tensor, spacing_tensor)
-
-        if modallity_embedding is not None:
-            emb += modallity_embedding
-            # print("-"*10, "Modality embedding added to time embedding", "-"*10)
-        if resolution_embedding is not None:
-            emb += resolution_embedding
-
         h = self.conv_in(x)
-        down_mask_features = mask_features["down"] if mask_features is not None else None
-        h, _updated_down_block_res_samples = self._apply_down_blocks(h, emb, context, down_block_additional_residuals, down_mask_features)
+        h, _updated_down_block_res_samples = self._apply_down_blocks(h, emb, context, down_block_additional_residuals)
         h = self.middle_block(h, emb, context)
 
         # Additional residual conections for Controlnets
-        if mask_features is not None:
-            # h += self.mask_mid_projector(mask_features["mid"])
-            h += mask_features["mid"]
-
         if mid_block_additional_residual is not None:
             h += mid_block_additional_residual
 

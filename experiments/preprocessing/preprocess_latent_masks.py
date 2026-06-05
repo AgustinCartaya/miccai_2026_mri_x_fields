@@ -92,27 +92,32 @@ from scipy.ndimage import zoom
 
 
 
-def process_row(index, row, base_output_path, unique_modality, unique_resolution, merge_seg_3):
-    subject_id = row['subject_id']
+def process_row(index, row, base_output_path, unique_modality, unique_resolution, merge_dict, merge_name, segmentation_algorithm):
+    subject_id = row['iid']
     resolution = row['resolution']
     modality = row['modality']
-    seg_path = row['segmentation_path']
-
+    # seg_path = row['segmentation_path']
+    seg_path = row[f'seg_{segmentation_algorithm}_path']
+    # print(f"Processing subject {row['iid']} modality {row['modality']} resolution {row['resolution']}")
     if (not os.path.exists(seg_path)
         or (unique_modality is not None and modality != unique_modality)
         or (unique_resolution is not None and resolution != unique_resolution)
         ):
+        print(f"Skipping subject {row['iid']} {seg_path}")
         return index, None
 
     output_path = os.path.join(base_output_path, modality, f"{str(resolution)}T", str(subject_id))
-    output_name = "segmentation.npy"
+    output_name = f"segmentation_{segmentation_algorithm}_{merge_name}.npy"
     output_path_name = os.path.join(output_path, output_name)
 
     if not os.path.exists(output_path_name):
+        # print(f"Processing subject {row['iid']} modality {row['modality']} resolution {row['resolution']}")
         seg, aff = nfc.load_nifti(seg_path)
 
-        if merge_seg_3:
+        if merge_dict is None:
             seg = ufs.merge_seg36_to_seg3(seg)
+        else:
+            seg = ufs.merge_segmentation(seg, merge_dict)
 
         seg = prep_image.prepare_img(seg, normalize=False)
         seg_small = zoom(seg, (0.25, 0.25, 0.25), order=0)
@@ -125,13 +130,15 @@ def process_row(index, row, base_output_path, unique_modality, unique_resolution
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def preprocess_supersynth(split="train", unique_modality=None, unique_resolution=None, merge_seg_3=False):
+def preprocess_supersynth(split, unique_modality=None, unique_resolution=None, merge_dict=None, merge_name="merged_3", segmentation_algorithm="supersynth"):
     csv_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/{split}_data.csv"
     df = pd.read_csv(csv_path)
 
     base_output_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/{split}_data/preprocessed/latent_masks"
-    if merge_seg_3:
-        base_output_path = os.path.join(base_output_path, "merged_seg_3")
+    base_output_path = os.path.join(base_output_path, merge_name)
+
+    # if merge_seg_3:
+    #     base_output_path = os.path.join(base_output_path, "merged_seg_3")
 
     seg_paths = [None] * len(df)
 
@@ -144,7 +151,9 @@ def preprocess_supersynth(split="train", unique_modality=None, unique_resolution
                 base_output_path,
                 unique_modality,
                 unique_resolution,
-                merge_seg_3
+                merge_dict,
+                merge_name,
+                segmentation_algorithm
             )
             for idx, row in df.iterrows()
         ]
@@ -153,10 +162,27 @@ def preprocess_supersynth(split="train", unique_modality=None, unique_resolution
             idx, result = f.result()
             seg_paths[idx] = result
 
-    df["latent_seg_mask"] = seg_paths
+    df[f"latent_seg_{segmentation_algorithm}_{merge_name}_path"] = seg_paths
 
     output_csv_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/{split}_data_with_latent_masks.csv"
     df.to_csv(output_csv_path, index=False)
 
 if __name__ == "__main__":
-    preprocess_supersynth(split="pr_train", unique_modality=None, unique_resolution=None, merge_seg_3=True)
+
+    mapping_dict_8 = {
+        1: ufs.SURROUNDING_CSF,    
+        2: ufs.CEREBRAL_CORTEX_36,
+        3: ufs.CEREBRAL_WM + ufs.EXTRA_CEREBRAL_WM,
+        4: ufs.INTERNAL_CSF,
+        5: ufs.CEREBRAL_SUB_CORTICAL_GM + ufs.EXTRA_CEREBRAL_SUB_CORTICAL_GM,
+        6: ufs.CEREBELLUM_GM,
+        7: ufs.CEREBELLUM_WM,
+        8: ufs.BRAINSTEM
+    }
+
+
+    # preprocess_supersynth(split="pr_train", unique_modality=None, unique_resolution=None, merge_seg_3=True, segmentation_algorithm="supersynth")
+    # preprocess_supersynth(split="train", unique_modality=None, unique_resolution=None, merge_seg_3=True, segmentation_algorithm="supersynth")
+    # preprocess_supersynth(split="val", unique_modality=None, unique_resolution=None, merge_seg_3=True, segmentation_algorithm="supersynth")
+
+    preprocess_supersynth(split="train", unique_modality=None, unique_resolution=None, merge_dict=mapping_dict_8, merge_name="merged_8", segmentation_algorithm="supersynth")

@@ -17,7 +17,7 @@ import torch
 from autoencoder_declaration import AutoencoderPrediction
 
 
-device_name = f"cuda:0"
+device_name = f"cuda:2"
 device = torch.device(device_name)
 
 
@@ -38,11 +38,11 @@ def preprocess_latents(split="train"):
     
     latent_paths = []
     for index, row in tqdm(df.iterrows(), total=df.shape[0]):
-        subject_id = row['subject_id']
+        subject_id = row['iid']
         resolution = row['resolution']
         modality = row['modality']
         # split = row['split']
-        img_path = row['path']
+        img_path = row['org_img_path']
 
 
         # print(type(subject_id), type(resolution), type(modality), type(split), type(img_path))
@@ -79,5 +79,5 @@ def preprocess_latents(split="train"):
 
 if __name__ == "__main__":
     # preprocess_latents(split="train")
-    # preprocess_latents(split="val")
-    preprocess_latents(split="pr_train")
+    preprocess_latents(split="val")
+    # preprocess_latents(split="pr_train")

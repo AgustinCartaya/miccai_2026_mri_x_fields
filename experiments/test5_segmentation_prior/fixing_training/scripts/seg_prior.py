@@ -15,7 +15,6 @@ import shutil
 import glob
 
 sys.path.append('/home/agustin/phd/synthesis')
-sys.path.append('/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test4_finetune_brainst_diffusion_model/training/networks_declaration')
 
 
 # pytorch
@@ -43,7 +42,6 @@ from monai.bundle import ConfigParser
 
 import  networks_declaration.diffusion_model_unet_maisi_mask_seg as diffusion_model_unet_maisi
 import  networks_declaration.segmentation_encoder as segmentation_encoder
-import  networks_declaration.conditions_model as conditions_model
 
 
 # import attention_controller as attention_controller
@@ -57,7 +55,7 @@ sys.path.append('/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/u
 from autoencoder_declaration import AutoencoderPrediction
 
 # device_name = f"cuda:{gpu_selector.get_least_used_gpu()}"
-device_name = f"cuda:3"
+device_name = f"cuda:0"
 device = torch.device(device_name)
 
 
@@ -130,6 +128,16 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
 
         },
 
+        # "conditions_model": { # this is volumetric conditioning
+        #     "num_conditions": 18,  # number of conditions
+        #     "embed_dim": 512,  # same as the cross_attention_dim in the unet
+        #     "hidden_dim": [128, 256],  # half of the embedding dimension
+        #     "use_self_attention": False,  # whether to use self-attention
+        #     "n_heads": 8,  # number of attention heads
+        #     "n_att_layers": 1,  # number of layers in the MLP
+        #     "use_gelu": True, # whether to use gelu or relu
+        # },
+
         "segmentation_encoder_def": { # this is volumetric conditioning
             "spatial_dims": 3,  # number of conditions
             "in_channels": 3,
@@ -141,16 +149,6 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
                 256,
                 512
             ],  # half of the embedding dimension
-        },
-                
-        "modality_encoder_def": { # this is volumetric conditioning
-            "num_conditions": 3,  # number of conditions
-            # "embed_dim": 512,  # this will be automatically set to be the same as the unet embedding dimension
-        },
-
-        "resolution_encoder_def": { # this is volumetric conditioning
-            "num_conditions": 3,  # number of conditions
-            # "embed_dim": 512,  # this will be automatically set to be the same as the unet embedding dimension
         },
 
 
@@ -233,16 +231,7 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
                                         num_res_blocks=args.segmentation_encoder_def.num_res_blocks,
                                         num_channels=args.segmentation_encoder_def.num_channels,
                                     )
-    
-    modality_encoder_model = conditions_model.SimpleConditionEmbedding(
-                                                                    num_conditions=args.modality_encoder_def.num_conditions,
-                                                                    embed_dim=unet.new_time_embed_dim,
-                                                                    )
-    
-    resolution_encoder_model = conditions_model.SimpleConditionEmbedding(
-                                                                    num_conditions=args.resolution_encoder_def.num_conditions,
-                                                                    embed_dim=unet.new_time_embed_dim,
-                                                                    )
+
     # noise scheduler
     if noise_scheduler_type == "ddim":
         noise_scheduler = parser.get_parsed_content("noise_scheduler", instantiate=True)
@@ -271,8 +260,6 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
     return {"unet": unet, 
               "autoencoder": autoencoder, 
               "segmentation_encoder_model": segmentation_encoder_model,
-            "modality_encoder_model": modality_encoder_model,
-            "resolution_encoder_model": resolution_encoder_model,
               "noise_scheduler": noise_scheduler,
               "networks_config": args}
 
@@ -284,9 +271,8 @@ class LoadPaths:
     def __init__(self, 
                  dataset_path_name, 
                  used_modalities,
-                   used_resolutions, 
-                   dataset_filters=None,
-                   max_subjects=None):
+                   target_resolution, 
+                   dataset_filters=None):
         """Load the dataset and latents from the specified paths.
         Args:
           - dataset_path_name: Path to the dataset.
@@ -303,24 +289,17 @@ class LoadPaths:
             for column, values_list in dataset_filters.items():
                 self.df = self.df[self.df[column].isin(values_list)]
                 
-        self.df = self.df[( self.df["modality"].isin(used_modalities)) & (self.df["resolution"].isin(used_resolutions)) ]
+        self.df = self.df[( self.df["modality"].isin(used_modalities)) & (self.df["resolution"] == target_resolution) ]
 
         self.modality_index_mapping = {modality: idx for idx, modality in enumerate(used_modalities)}
-        self.resolution_index_mapping = {resolution: idx for idx, resolution in enumerate(used_resolutions)}
-
         # map modality to index
         self.df["modality_idx"] = self.df["modality"].map(self.modality_index_mapping)
-        self.df["resolution_idx"] = self.df["resolution"].map(self.resolution_index_mapping)
-
-        if max_subjects is not None:
-            # self.df = self.df[self.df["subject_id"].isin(self.df["subject_id"].unique()[:max_subjects])]
-            self.df = self.df.head(max_subjects)
 
     def get_data(self, split="train"):
         complete_df = self.df.copy()
         complete_df = complete_df[complete_df["split"] == split]
         
-        self.subject_ids = complete_df["sid"].unique()
+        self.subject_ids = complete_df["subject_id"].unique()
 
         instances = []
         for i, row in complete_df.iterrows():
@@ -331,12 +310,11 @@ class LoadPaths:
                 # print(f"Latent path {latent_path} does not exist. Skipping this instance.")
                 continue
             instance_dict["latent_path"] = latent_path
-            instance_dict["subject_id"] = row["sid"]
+            instance_dict["subject_id"] = row["subject_id"]
             instance_dict["modality"] = row["modality"]
             instance_dict["modality_idx"] = row["modality_idx"]
             instance_dict["resolution"] = row["resolution"]
-            instance_dict["resolution_idx"] = row["resolution_idx"]
-            instance_dict["segmentation_npy_path"] = row["latent_seg_synthseg_path"]
+            instance_dict["segmentation_npy_path"] = row["latent_seg_mask"]
             instances.append(instance_dict)
         return instances
 
@@ -347,18 +325,16 @@ class PrepareDataset(Dataset):
     def __init__(self, 
                  dataset_path_name,
                  used_modalities,
-                 used_resolutions,
+                target_resolution,
                  dataset_filters=None,
                  split="train",
-                 max_subjects=None
                  ):
 
         # load data
         data_loader = LoadPaths(dataset_path_name,
                                     used_modalities=used_modalities,
-                                    used_resolutions=used_resolutions,
+                                    target_resolution=target_resolution,
                                   dataset_filters=dataset_filters,
-                                    max_subjects=max_subjects
                                   )
         
         self.train_data = data_loader.get_data(split=split)
@@ -403,9 +379,8 @@ class PrepareDataset(Dataset):
         example["latent"] = torch.from_numpy(instance_latent)
 
         example["modality"] = instance["modality"]
-        example["modality_idx"] = torch.tensor(instance["modality_idx"])
+        example["modality_idx"] = torch.tensor([instance["modality_idx"]])
         example["resolution"] = instance["resolution"]
-        example["resolution_idx"] = torch.tensor(instance["resolution_idx"])
 
 
         # segmentation_npy_path = instance["segmentation_npy_path"]
@@ -432,7 +407,6 @@ def collate_fn(examples):
     res_dict["latent"] = latent    
 
     res_dict["resolution"]  = [example["resolution"] for example in examples]
-    res_dict["resolution_idx"] = torch.stack([example["resolution_idx"] for example in examples])
 
     segmentation = torch.stack([example["segmentation"] for example in examples])
     segmentation = segmentation.to(memory_format=torch.contiguous_format).float()
@@ -441,20 +415,18 @@ def collate_fn(examples):
     return res_dict
 
 
-def instantiate_dataset(dataset_path_name, used_modalities, used_resolutions,
+def instantiate_dataset(dataset_path_name, used_modalities, target_resolution,
                         batch_size, 
                         dataset_filters=None,
                         split="train",
-                        max_subjects=None
                         ):
     # ---- Data set creation
     train_dataset = PrepareDataset(
         dataset_path_name=dataset_path_name,
         used_modalities=used_modalities,
-        used_resolutions=used_resolutions,
+        target_resolution=target_resolution,
         dataset_filters=dataset_filters,
         split=split,
-        max_subjects=max_subjects
     )
 
     # sampler = MaxPerSubjectSampler(train_dataset, max_per_subject=max_timepoints_per_epoch, shuffle=True, generator=gen_dataloader)
@@ -479,8 +451,6 @@ def validation(
     noise_scheduler,
     # conditions_model,
     segmentation_encoder_model,
-    modality_encoder_model,
-    resolution_encoder_model,
     autoencoder,
     val_dataloader,
     step,
@@ -490,7 +460,6 @@ def validation(
 
     print(f"Validation step {step}")
     modality_index_mapping = {modality: idx for idx, modality in enumerate(args.used_modalities)}
-    resolution_index_mapping = {resolution: idx for idx, resolution in enumerate(args.used_resolutions)}
 
     # output_path_img = os.path.join(args.output_path, args.val_imgs_dir_name, f"step_{step}", "images")
     output_path_step = os.path.join(args.output_path, args.val_imgs_dir_name, f"step_{step}")
@@ -501,7 +470,7 @@ def validation(
         os.makedirs(_output_path, exist_ok=True)
 
     imgs_list = []
-    total_images = len(args.val_seeds) * len(val_dataloader)
+    total_images = len(args.val_seeds) * len(args.used_modalities)
     c = 0
     for seed in args.val_seeds:
         seed_img_list = []
@@ -512,15 +481,13 @@ def validation(
             latents = torch.randn(_l_shape, generator=gen_randn).half().to(device)
 
             segmentation_embedding = segmentation_encoder_model(batch["segmentation"].to(device))
-            modality_embedding = modality_encoder_model(batch["modality_idx"].to(device))
-            resolution_embedding = resolution_encoder_model(batch["resolution_idx"].to(device))
 
             all_timesteps = noise_scheduler.timesteps
             all_next_timesteps = torch.cat((all_timesteps[1:], torch.tensor([0], dtype=all_timesteps.dtype)))
             progress_bar = tqdm(
                 zip(all_timesteps, all_next_timesteps),
                 total=min(len(all_timesteps), len(all_next_timesteps)),
-                desc=f"Step {step} Modality {batch['modality']} Resolution {batch['resolution']} {c+1}/{total_images}"
+                desc=f"Step {step} generating val with seg res {batch['resolution']} {c+1}/{total_images}"
             )
             c+=1
             with torch.no_grad(), torch.amp.autocast("cuda"):
@@ -530,9 +497,7 @@ def validation(
                     model_output = unet(
                         x=latents,
                         timesteps=torch.Tensor((t,)).to(device),
-                        mask_features = segmentation_embedding,
-                        modallity_embedding = modality_embedding,
-                        resolution_embedding = resolution_embedding
+                        mask_features = segmentation_embedding
                     )
 
                     if not isinstance(noise_scheduler, RFlowScheduler):
@@ -581,19 +546,15 @@ def validation(
 
 
 
-def save_model(unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, optimizer, optimizer_segmentation_encoder, lr_scheduler, lr_scheduler_segmentation_encoder, global_step, out_model_path, ema=None, best=False):  # MOD: se añade parámetro ema
+def save_model(unet, segmentation_encoder_model, optimizer, lr_scheduler, global_step, out_model_path, ema=None, best=False):  # MOD: se añade parámetro ema
     # Guardar el modelo
     unet_state_dict = unet.module.state_dict() if torch.distributed.is_initialized() else unet.state_dict()
     checkpoint = {
         "unet_state_dict": unet_state_dict,
         "optimizer_state_dict": optimizer.state_dict(),
-        "optimizer_segmentation_encoder_state_dict": optimizer_segmentation_encoder.state_dict(),
-        "lr_scheduler_state_dict": lr_scheduler.state_dict() if lr_scheduler is not None else None,
-        "lr_scheduler_segmentation_encoder_state_dict": lr_scheduler_segmentation_encoder.state_dict() if lr_scheduler_segmentation_encoder is not None else None,
-        "segmentation_encoder_model_state_dict": segmentation_encoder_model.state_dict(),
-        "modality_encoder_model_state_dict": modality_encoder_model.state_dict(),
-        "resolution_encoder_model_state_dict": resolution_encoder_model.state_dict(),
         "num_train_timesteps": global_step,
+        "lr_scheduler_state_dict": lr_scheduler.state_dict() if lr_scheduler is not None else None,
+        "segmentation_encoder_model_state_dict": segmentation_encoder_model.state_dict(),
     }
     # MOD: Agregar los pesos EMA en el checkpoint
     if ema is not None:
@@ -614,22 +575,18 @@ def save_model(unet, segmentation_encoder_model, modality_encoder_model, resolut
     gc.collect()
 
 
-def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, device, train_dataloader_len,
-                    gradient_accumulation_steps, batch_size, optimizer=None, optimizer_segmentation_encoder=None, lr_scheduler=None, lr_scheduler_segmentation_encoder=None, ema=None):
+def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, device, train_dataloader_len,
+                    gradient_accumulation_steps, batch_size, optimizer=None, lr_scheduler=None, ema=None):
     # 1. Load checkpoint on CPU to avoid using VRAM
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     # 2. Load weights into models
     unet.load_state_dict(checkpoint["unet_state_dict"], strict=False)
     segmentation_encoder_model.load_state_dict(checkpoint["segmentation_encoder_model_state_dict"], strict=False)
-    modality_encoder_model.load_state_dict(checkpoint["modality_encoder_model_state_dict"], strict=False)
-    resolution_encoder_model.load_state_dict(checkpoint["resolution_encoder_model_state_dict"], strict=False)
 
     # 3. Move models to GPU
     unet.to(device)
     segmentation_encoder_model.to(device)
-    modality_encoder_model.to(device)
-    resolution_encoder_model.to(device)
 
     # 4. EMA (optional)
     if ema is not None and "ema_state_dict" in checkpoint:
@@ -646,20 +603,8 @@ def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_
                 if isinstance(v, torch.Tensor):
                     state[k] = v.to(device)
 
-    if optimizer_segmentation_encoder is not None and "optimizer_segmentation_encoder_state_dict" in checkpoint:
-        optimizer_segmentation_encoder.load_state_dict(checkpoint["optimizer_segmentation_encoder_state_dict"])
-        # Move segmentation encoder optimizer buffers to GPU
-        for state in optimizer_segmentation_encoder.state.values():
-            for k, v in state.items():
-                if isinstance(v, torch.Tensor):
-                    state[k] = v.to(device)
-
     if lr_scheduler is not None and "lr_scheduler_state_dict" in checkpoint and checkpoint["lr_scheduler_state_dict"] is not None:
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
-
-
-    if lr_scheduler_segmentation_encoder is not None and "lr_scheduler_segmentation_encoder_state_dict" in checkpoint and checkpoint["lr_scheduler_segmentation_encoder_state_dict"] is not None:
-        lr_scheduler_segmentation_encoder.load_state_dict(checkpoint["lr_scheduler_segmentation_encoder_state_dict"])
 
     # 6. Compute first_epoch and global_step
     global_step = checkpoint["num_train_timesteps"]
@@ -700,7 +645,6 @@ class EMA:
         self.decay = decay
         self.warm_up_steps = warm_up_steps
         self.warm_up_decay = warm_up_decay
-        
         self.shadow = {}
         self.backup = {}
         self.optimize_cpu = optimize_cpu
@@ -804,11 +748,16 @@ def train(
     gen_modality = torch.Generator().manual_seed(args_train.seed)
     gen_resolution = torch.Generator().manual_seed(args_train.seed)
 
+    # ---- instantiate models
+    # if args_train.identity_allowed:
+    #     x_valid_resolutions = args_train.resolutions
+    # else:
+    #     x_valid_resolutions = [res for res in args_train.resolutions if res != args_train.target_resolution]
+    # args_train.x_valid_resolutions = x_valid_resolutions
+
     models_dict = instantiate_unconditioned_models(device, noise_scheduler_type=args_train.noise_scheduler_type)
     unet = models_dict["unet"]
     segmentation_encoder_model = models_dict["segmentation_encoder_model"]
-    modality_encoder_model = models_dict["modality_encoder_model"]
-    resolution_encoder_model = models_dict["resolution_encoder_model"]
     autoencoder = models_dict["autoencoder"]
     networks_config = models_dict["networks_config"]
     noise_scheduler = models_dict["noise_scheduler"]
@@ -818,7 +767,7 @@ def train(
     train_dataloader = instantiate_dataset(
         dataset_path_name=args_train.df_path,
         used_modalities=args_train.used_modalities,
-        used_resolutions=args_train.used_resolutions,
+        target_resolution=args_train.target_resolution,
         # latents_path=args_train.latents_path,
         batch_size=args_train.batch_size,
         split="train",
@@ -827,12 +776,9 @@ def train(
     val_dataloader = instantiate_dataset(
         dataset_path_name=args_train.df_path,
         used_modalities=args_train.used_modalities,
-        used_resolutions=args_train.used_resolutions,
+        target_resolution=args_train.target_resolution,
         batch_size=1,
         split="val",
-        max_subjects=args_train.max_val_subjects,
-        dataset_filters = fc.args_to_dict(args_train.val_dataset_filters)
-    
     )
 
 
@@ -858,15 +804,15 @@ def train(
 
     # ---- optimizer and lr_scheduler
     optimizer = torch.optim.AdamW(
-        list(unet.parameters()) + list(modality_encoder_model.parameters()) + list(resolution_encoder_model.parameters()),
-        # list(unet.parameters()),
+        # list(unet.parameters()) + list(conditions_model.parameters()),
+        list(unet.parameters()),
         lr=args_train.lr,
         betas=(0.9, 0.999),
         eps=1e-8,
         weight_decay=0.01
     )
 
-    optimizer_segmentation_encoder = torch.optim.AdamW(
+    segmentation_encoder_optimizer = torch.optim.AdamW(
         segmentation_encoder_model.parameters(),
         lr=args_train.segmentation_encoder_lr,
         betas=(0.9, 0.999),
@@ -888,17 +834,17 @@ def train(
             
     if args_train.lr_scheduler_segmentation_encoder is not None:
         if args_train.lr_scheduler_segmentation_encoder.name == "PolynomialLR":
-            lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.PolynomialLR(optimizer_segmentation_encoder, total_iters=args_train.max_train_steps, power=args_train.lr_scheduler_segmentation_encoder.power)
+            lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.PolynomialLR(segmentation_encoder_optimizer, total_iters=args_train.max_train_steps, power=args_train.lr_scheduler_segmentation_encoder.power)
         elif args_train.lr_scheduler_segmentation_encoder.name == "CosineAnnealingLR":
-            lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_segmentation_encoder, T_max=args_train.max_train_steps, eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
+            lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.CosineAnnealingLR(segmentation_encoder_optimizer, T_max=args_train.max_train_steps, eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
         elif args_train.lr_scheduler_segmentation_encoder.name == "WarmupCosineLR":
-            lr_scheduler_segmentation_encoder = create_warmup_cosine_scheduler(optimizer_segmentation_encoder,
+            lr_scheduler_segmentation_encoder = create_warmup_cosine_scheduler(segmentation_encoder_optimizer,
                                                                                warmup_start_factor=args_train.lr_scheduler_segmentation_encoder.warmup_start_factor,
                                                                                warmup_steps=args_train.lr_scheduler_segmentation_encoder.warmup_steps,
                                                                                max_train_steps=args_train.max_train_steps,
                                                                                eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
 
-                                                
+                                                                    
     else:
         lr_scheduler = None
         lr_scheduler_segmentation_encoder = None
@@ -915,8 +861,6 @@ def train(
     # ---- resume from checkpoint
     unet.to(device)
     segmentation_encoder_model.to(device)
-    modality_encoder_model.to(device)
-    resolution_encoder_model.to(device)
 
     # Initilize ema
     if args_train.use_ema:
@@ -934,16 +878,12 @@ def train(
             args_train.resume_from_checkpoint_path_name,
             unet,
             segmentation_encoder_model,
-            modality_encoder_model,
-            resolution_encoder_model,
             device=device,
             train_dataloader_len=len(train_dataloader),
             gradient_accumulation_steps=args_train.gradient_accumulation_steps,
             batch_size=args_train.batch_size,
             optimizer=optimizer,
-            optimizer_segmentation_encoder=optimizer_segmentation_encoder,
             lr_scheduler=lr_scheduler,
-            lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
             ema=ema
         )
 
@@ -952,8 +892,6 @@ def train(
         checkpoint = torch.load(args_train.load_pretrained_model_from, map_location=device_name)
         unet.load_state_dict(checkpoint["unet_state_dict"], strict=False)
         segmentation_encoder_model.load_state_dict(checkpoint["segmentation_encoder_model_state_dict"], strict=False)
-        modality_encoder_model.load_state_dict(checkpoint["modality_encoder_model_state_dict"], strict=False)
-        resolution_encoder_model.load_state_dict(checkpoint["resolution_encoder_model_state_dict"], strict=False)
         if args_train.use_ema and "ema_state_dict" in checkpoint:
             ema.shadow = checkpoint["ema_state_dict"]
             print("EMA state loaded from checkpoint")
@@ -961,8 +899,6 @@ def train(
     
     unet.train()
     segmentation_encoder_model.train()  
-    modality_encoder_model.train()
-    resolution_encoder_model.train()
 
     # ---- memory reduction
     # -------- automatic mixed precision
@@ -973,6 +909,10 @@ def train(
     gradient_accumulation_count = 0
 
 
+    # ---- copy normalizer parameters .json to the model folder
+    # shutil.copy2(args_train.normalizer_params, os.path.join(args_train.output_path, "normalizer_params.json"))
+    
+
 
     # ---- training loop
     progress_bar = tqdm(
@@ -981,13 +921,27 @@ def train(
         initial=global_step
     )
 
+
     for epoch in range(first_epoch, max_epochs):
         for batch in train_dataloader:
 
+            # if args_train.validation_first:
+            #     if args_train.latents_shape is None:
+            #         args_train.latents_shape = batch["latent"].shape[-4:]  # save latents shape for later use in validation
+
+            #     unet.eval()
+            #     validation(unet, noise_scheduler, conditions_model, autoencoder, global_step, args_train)
+            #     unet.train()
+            #     args_train.validation_first = False  # only validate in the first step
+            #     args_train.initial_val = False  # only validate in the first step
+
             # prepare inputs
             latents = batch["latent"].to(device)
-            condition_modality_idx = batch["modality_idx"].to(device)
-            condition_resolution_idx = batch["resolution_idx"].to(device)
+            # condition_modality_idx = batch["modality_idx"].to(device)
+
+            # print(f"Condition modality index: {condition_modality_idx}, ")
+            # print(f"Shape: {condition_modality_idx.shape}, ")
+
 
             # Forward pass
             with autocast("cuda", enabled=args_train.amp):
@@ -999,24 +953,16 @@ def train(
                     timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device="cpu", generator=gen_t).long().to(device)
 
                 noisy_latent = noise_scheduler.add_noise(original_samples=latents, noise=noise, timesteps=timesteps)
+                # print(f"seg.shape: {batch['segmentation'].shape}")
                 
                 segmentation_embedding = segmentation_encoder_model(batch["segmentation"].to(device))
-                modality_embedding = modality_encoder_model(condition_modality_idx)
-                resolution_embedding = resolution_encoder_model(condition_resolution_idx)
-
-                # if batch['modality'][0] == "T1W":
-                # print("-"*10, "Modality embedding", "-"*10)
-                # print(f"modality: \n {batch['modality']} \n {batch['modality_idx']} \n {modality_embedding[:,::50]}")
-                # print("-"*10, "Resolution embedding", "-"*10)
-                # print(f"resolution: \n {batch['resolution']} \n {batch['resolution_idx']} \n {resolution_embedding[:,::50]}")
-
+                # print(f"seg.shape: {batch['segmentation'].shape}, seg_emb.shape: {segmentation_embedding['mid'].shape}")
+                # print([aaa.shape for aaa in segmentation_embedding["down"]])
 
                 model_output = unet(noisy_latent, 
                                   timesteps=timesteps,
                                 #   context = volumetric_embedding,
-                                    mask_features = segmentation_embedding,
-                                    modallity_embedding = modality_embedding,
-                                    resolution_embedding = resolution_embedding
+                                    mask_features = segmentation_embedding
                                     )
                 
 
@@ -1035,7 +981,11 @@ def train(
                         f"[{DDPMPredictionType.EPSILON},{DDPMPredictionType.SAMPLE},{DDPMPredictionType.V_PREDICTION}]",
                     )
 
-            loss_noise = loss_pt(model_output.float(), model_gt.float())   # Dividir para escalar la pérdida
+                loss_noise = loss_pt(model_output.float(), model_gt.float())   # Dividir para escalar la pérdida
+
+               
+
+            # loss = loss_noise + args_train.loss_weights.att_mask * loss_att_maps
             loss = loss_noise / args_train.gradient_accumulation_steps  # Dividir la pérdida por los pasos de acumulación de gradientes
 
             # Acumulación de gradientes
@@ -1051,21 +1001,21 @@ def train(
                 # Gradient clipping
                 if args_train.amp:
                     scaler.unscale_(optimizer)  # Desescalar antes de clipping
-                    scaler.unscale_(optimizer_segmentation_encoder)
+                    scaler.unscale_(segmentation_encoder_optimizer)
                     torch.nn.utils.clip_grad_norm_(
-                        list(unet.parameters()) + list(segmentation_encoder_model.parameters()) + list(modality_encoder_model.parameters()) + list(resolution_encoder_model.parameters()),
+                        list(unet.parameters()) + list(segmentation_encoder_model.parameters()),
                         max_norm=1.0
                     )
                            
                 if args_train.amp:
                     scaler.step(optimizer)
-                    scaler.step(optimizer_segmentation_encoder)
+                    scaler.step(segmentation_encoder_optimizer)
                     scaler.update()
                 else:
                     optimizer.step()
-                    optimizer_segmentation_encoder.step()
+                    segmentation_encoder_optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
-                optimizer_segmentation_encoder.zero_grad(set_to_none=True)
+                segmentation_encoder_optimizer.zero_grad(set_to_none=True)
                 
                 # update ema
                 if args_train.use_ema:
@@ -1076,9 +1026,11 @@ def train(
                 if lr_scheduler_segmentation_encoder is not None:
                     lr_scheduler_segmentation_encoder.step()
 
+                # optimizer.zero_grad()  # Solo hacer zero_grad() después de actualizar los pesos
                 gradient_accumulation_count = 0  # Reiniciar el contador
 
                 # update writter 
+
                 if global_step % 10 == 0:
                     writer.add_scalar("Loss/train", loss.item(), global_step)
                     writer.add_scalar("Learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -1100,40 +1052,22 @@ def train(
 
                 # save the model in intervals
                 if global_step % args_train.save_checkpoint_interval == 0:
-                    save_model(unet=unet, 
-                               segmentation_encoder_model=segmentation_encoder_model, 
-                               modality_encoder_model=modality_encoder_model, 
-                               resolution_encoder_model=resolution_encoder_model, 
-                               optimizer=optimizer,
-                                optimizer_segmentation_encoder=optimizer_segmentation_encoder, 
-                               lr_scheduler=lr_scheduler, 
-                                lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
-                               global_step=global_step, 
-                               out_model_path=_checkpoint_dir_name, 
-                               ema=ema)
+                    save_model(unet, segmentation_encoder_model, optimizer, lr_scheduler, global_step, _checkpoint_dir_name, ema=ema)
 
                 # Generar imágenes en intervalos
                 if args_train.initial_val or global_step % args_train.val_interval == 0:
                     unet.eval()
                     segmentation_encoder_model.eval()
-                    modality_encoder_model.eval()
-                    resolution_encoder_model.eval()
+                    # conditions_model.eval()
 
+                    # validation(unet, autoencoder, global_step, args_train)
                     if args_train.latents_shape is None:
                         args_train.latents_shape = latents.shape[-4:]  # save latents shape for later use in validation
 
                     try:
                         if args_train.use_ema:
                             ema.apply_shadow()
-                        validation(unet=unet, 
-                                   noise_scheduler=noise_scheduler, 
-                                   segmentation_encoder_model=segmentation_encoder_model, 
-                                      modality_encoder_model=modality_encoder_model,
-                                      resolution_encoder_model=resolution_encoder_model,
-                                   autoencoder=autoencoder, 
-                                   val_dataloader=val_dataloader, 
-                                   step=global_step, 
-                                   args=args_train)
+                        validation(unet, noise_scheduler, segmentation_encoder_model, autoencoder, val_dataloader, global_step, args_train)
                     except Exception as e:
                         print(f"ERROR DURING VALIDATION STEP {global_step}: {e}")
                     finally:
@@ -1143,8 +1077,6 @@ def train(
                     args_train.initial_val = False
                     unet.train()
                     segmentation_encoder_model.train()
-                    modality_encoder_model.train()
-                    resolution_encoder_model.train()
                     # conditions_model.train()
 
                 if global_step >= args_train.max_train_steps:
@@ -1157,17 +1089,8 @@ def train(
     progress_bar.close()
 
     # # make  out_model_path dir if it does not exist
-    save_model(unet=unet, 
-                segmentation_encoder_model=segmentation_encoder_model, 
-                modality_encoder_model=modality_encoder_model, 
-                resolution_encoder_model=resolution_encoder_model, 
-                optimizer=optimizer,
-                optimizer_segmentation_encoder=optimizer_segmentation_encoder, 
-                lr_scheduler=lr_scheduler, 
-                lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
-                global_step=global_step, 
-                out_model_path=_checkpoint_dir_name, 
-                ema=ema)
+    save_model(unet, segmentation_encoder_model, optimizer, lr_scheduler, global_step, _checkpoint_dir_name, ema=ema, )
+
 
 
 
@@ -1177,24 +1100,25 @@ def train(
 
 args_train = {
     # directories 
-    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test2",
+    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/fixing_training/models/test1_seg_prior",
     "checkpoints_dir_name": "check_points",
     "logs_dir_name": "logs",
     "val_imgs_dir_name": "val_imgs",
 
     # data
-    "df_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data.csv",
+    "df_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/pr_train_data_with_latent_masks.csv",
+    "latents_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/train_data/preprocessed/maisi_latents",
 
     # training configuration
     "max_train_steps": 500000,
-    "save_checkpoint_interval": 5000,#10000,
+    "save_checkpoint_interval": 10000,
 
     # ---- memory reduction
     "amp": True,
 
     # ---- Training stability
-    "batch_size": 6, #6 
-    "gradient_accumulation_steps": 2,#2,
+    "batch_size": 6, #3 
+    "gradient_accumulation_steps": 3,
     "use_ema": True,
     "ema_params": {
         "decay": 0.999,
@@ -1219,13 +1143,12 @@ args_train = {
 
     # ---- pretrained_model
     # "load_pretrained_model_from": "/home/agustin/phd/synthesis/tests/D3/maisi/understanding_training/no_synthsr/aaco5590_dataset_no_outliers_bfc/models/rflow/check_points/model_200000.pt",
-    # "load_pretrained_model_from": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_20.pt",
     "load_pretrained_model_from": None, # not working
 
 
     # ---- resume from checkpoint
-    "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_70000.pt",
-    # "resume_from_checkpoint_path_name": None, # not working
+    # "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test2_direct_dummy_conversion/training/models/test1_other_loses/check_points/model_5000.pt",
+    "resume_from_checkpoint_path_name": None, # not working
 
     # reproducibility
     "seed": 42,
@@ -1234,18 +1157,14 @@ args_train = {
     "val_interval": 1000,
     "initial_val": True, # remember drop out
     # "validation_first": True, # if True, the model will be validated before the first training step, if False, the model will be validated after the first training step
-    "val_seeds": [0],#[0,12357], # seeds for the noise generation during validation
-    "max_val_subjects": None, # max number of subjects to be generated during validation, set to None to use all the subjects in the val dataloader
-    "val_dataset_filters": {
-        'iid': ["SP_T1W_3T_0006", "SP_T1W_5T_0006", "SP_T1W_7T_0006", 
-                       "SP_T2W_3T_0006", "SP_T2W_5T_0006", "SP_T2W_7T_0006",
-                       "SP_T2FLAIR_3T_0006", "SP_T2FLAIR_5T_0006", "SP_T2FLAIR_7T_0006",]
-    },
+    "val_seeds": [0,3], # seeds for the noise generation during validation
+
     # specialied synthesis
     # "specialized_index": 1, # None for random, 0 for t1n, 1 for t1c, 2 for t2w, 3 for t2f
     
-    "used_modalities": ["T1W", "T2W", "T2FLAIR"], # "T1W", "T2W", "T2FLAIR"
-    "used_resolutions": [3, 5, 7], #0.1, 1.5, 3, 5, 7
+    "used_modalities": ["T1W"], # "t1w", "t1c", "t2w", "t2f"
+    # "resolutions": [0.1, 1.5, 3, 5, 7],
+    "target_resolution": 7,
 
     # "identity_allowed": True, # if True, the model can learn the identity function, if False, the model has to learn the conversion
 
@@ -1266,80 +1185,3 @@ train(
     args_train,
     device,
 )
-
-
-# I am training a diffusion model to generate brain MRI images. I have two condition embedding to be optimized that refer to the modality_embedding (T1w, T2w, falir), and the resolution embedding (3 tesla, 5 tesla, 7 tesla). I want to add the following two losses.
-# Let's supose that I have two subjects in the batch s1 y s2
-
-# 1. 
-
-# import torch
-# import torch.nn.functional as F
-
-# def modality_prototype_losses(embeddings, modality_ids, margin=0.2):
-#     """
-#     Returns:
-#         intra_loss: compactness within modality
-#         inter_loss: separation between modality prototypes
-#     """
-
-#     embeddings = F.normalize(embeddings, dim=1)
-
-#     prototypes = []
-#     proto_labels = []
-
-#     intra_loss = 0.0
-#     valid_modalities = 0
-
-#     unique_modalities = modality_ids.unique()
-
-#     # -------------------------
-#     # 1. Compute prototypes ONCE
-#     # -------------------------
-#     for m in unique_modalities:
-#         mask = modality_ids == m
-#         if mask.sum() == 0:
-#             continue
-
-#         proto = embeddings[mask].mean(dim=0)
-#         proto = F.normalize(proto, dim=0)
-
-#         prototypes.append(proto)
-#         proto_labels.append(m)
-
-#         # -------------------------
-#         # 2. Intra-class loss
-#         # -------------------------
-#         sim = (embeddings[mask] * proto).sum(dim=1)  # cosine similarity
-#         intra_loss += (1 - sim).mean()
-
-#         valid_modalities += 1
-
-#     if valid_modalities == 0:
-#         zero = torch.tensor(0.0, device=embeddings.device)
-#         return zero, zero
-
-#     intra_loss = intra_loss / valid_modalities
-
-#     # -------------------------
-#     # 3. Inter-class separation
-#     # -------------------------
-#     if len(prototypes) < 2:
-#         inter_loss = torch.tensor(0.0, device=embeddings.device)
-#     else:
-#         prototypes = torch.stack(prototypes)  # (M, D)
-
-#         sim_matrix = prototypes @ prototypes.T  # cosine similarity
-
-#         inter_loss = 0.0
-#         count = 0
-
-#         M = sim_matrix.size(0)
-#         for i in range(M):
-#             for j in range(i + 1, M):
-#                 inter_loss += F.relu(sim_matrix[i, j] - margin)
-#                 count += 1
-
-#         inter_loss = inter_loss / max(count, 1)
-
-#     return intra_loss, inter_loss

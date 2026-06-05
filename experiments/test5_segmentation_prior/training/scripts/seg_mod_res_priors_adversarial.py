@@ -15,7 +15,7 @@ import shutil
 import glob
 
 sys.path.append('/home/agustin/phd/synthesis')
-sys.path.append('/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test4_finetune_brainst_diffusion_model/training/networks_declaration')
+# sys.path.append('/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test4_finetune_brainst_diffusion_model/training/networks_declaration')
 
 
 # pytorch
@@ -44,7 +44,7 @@ from monai.bundle import ConfigParser
 import  networks_declaration.diffusion_model_unet_maisi_mask_seg as diffusion_model_unet_maisi
 import  networks_declaration.segmentation_encoder as segmentation_encoder
 import  networks_declaration.conditions_model as conditions_model
-
+import  networks_declaration.patchgan_discriminator as patchgan_discriminator
 
 # import attention_controller as attention_controller
 from networks_declaration.rectified_flow import RFlowScheduler
@@ -173,6 +173,20 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
         "scale":1.4
         },
 
+        "patchgan_discriminator_def": {
+                    "_target_": "generative.networks.nets.PatchDiscriminator",
+                    "spatial_dims": 3,
+                    "num_channels": 64,
+                    "in_channels": 4,
+                    "out_channels": 1,
+                    "num_layers_d": 3,
+                    "kernel_size": 4,
+                    "activation": ("LEAKYRELU", {"negative_slope": 0.2}),
+                    "norm": "INSTANCE",
+                    "bias": True,
+                    "dropout": 0.0,
+                    "last_conv_kernel_size": 3,
+                }
 
     }
 
@@ -217,16 +231,6 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
                                                 )
     
 
-    # # ConditionTokens
-    # conditions_model = volumne_encoder.ConditionTokens(num_conditions=args.conditions_model.num_conditions, 
-    #                                 embed_dim=args.conditions_model.embed_dim,
-    #                                 hidden_dim=args.conditions_model.hidden_dim,
-    #                                 use_self_attention=args.conditions_model.use_self_attention, 
-    #                                 n_heads=args.conditions_model.n_heads, 
-    #                                 n_layers=args.conditions_model.n_att_layers,
-    #                                 use_gelu=args.conditions_model.use_gelu
-    #                                 )
-
     segmentation_encoder_model = segmentation_encoder.SegmentationEncoder(
                                         spatial_dims=args.segmentation_encoder_def.spatial_dims,
                                         in_channels=args.segmentation_encoder_def.in_channels,
@@ -243,6 +247,24 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
                                                                     num_conditions=args.resolution_encoder_def.num_conditions,
                                                                     embed_dim=unet.new_time_embed_dim,
                                                                     )
+
+    discriminator_model = patchgan_discriminator.PatchDiscriminator(
+                                                spatial_dims = args.patchgan_discriminator_def.spatial_dims,
+                                                num_channels = args.patchgan_discriminator_def.num_channels,
+                                                in_channels = args.patchgan_discriminator_def.in_channels,
+                                                out_channels = args.patchgan_discriminator_def.out_channels,
+                                                num_layers_d = args.patchgan_discriminator_def.num_layers_d,
+                                                kernel_size = args.patchgan_discriminator_def.kernel_size,
+                                                activation = args.patchgan_discriminator_def.activation,
+                                                norm = args.patchgan_discriminator_def.norm,
+                                                bias = args.patchgan_discriminator_def.bias,
+                                                dropout = args.patchgan_discriminator_def.dropout,
+                                                last_conv_kernel_size = args.patchgan_discriminator_def.last_conv_kernel_size
+                                            )
+
+
+
+
     # noise scheduler
     if noise_scheduler_type == "ddim":
         noise_scheduler = parser.get_parsed_content("noise_scheduler", instantiate=True)
@@ -274,6 +296,7 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
             "modality_encoder_model": modality_encoder_model,
             "resolution_encoder_model": resolution_encoder_model,
               "noise_scheduler": noise_scheduler,
+              "discriminator_model": discriminator_model,
               "networks_config": args}
 
 
@@ -581,18 +604,21 @@ def validation(
 
 
 
-def save_model(unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, optimizer, optimizer_segmentation_encoder, lr_scheduler, lr_scheduler_segmentation_encoder, global_step, out_model_path, ema=None, best=False):  # MOD: se añade parámetro ema
+def save_model(unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, discriminator_model, optimizer, optimizer_segmentation_encoder, optimizer_discriminator, lr_scheduler, lr_scheduler_segmentation_encoder, lr_scheduler_discriminator, global_step, out_model_path, ema=None, best=False):  # MOD: se añade parámetro ema
     # Guardar el modelo
     unet_state_dict = unet.module.state_dict() if torch.distributed.is_initialized() else unet.state_dict()
     checkpoint = {
         "unet_state_dict": unet_state_dict,
         "optimizer_state_dict": optimizer.state_dict(),
         "optimizer_segmentation_encoder_state_dict": optimizer_segmentation_encoder.state_dict(),
+        "optimizer_discriminator_state_dict": optimizer_discriminator.state_dict(),
         "lr_scheduler_state_dict": lr_scheduler.state_dict() if lr_scheduler is not None else None,
         "lr_scheduler_segmentation_encoder_state_dict": lr_scheduler_segmentation_encoder.state_dict() if lr_scheduler_segmentation_encoder is not None else None,
+        "lr_scheduler_discriminator_state_dict": lr_scheduler_discriminator.state_dict() if lr_scheduler_discriminator is not None else None,
         "segmentation_encoder_model_state_dict": segmentation_encoder_model.state_dict(),
         "modality_encoder_model_state_dict": modality_encoder_model.state_dict(),
         "resolution_encoder_model_state_dict": resolution_encoder_model.state_dict(),
+        "discriminator_model_state_dict": discriminator_model.state_dict(),
         "num_train_timesteps": global_step,
     }
     # MOD: Agregar los pesos EMA en el checkpoint
@@ -614,8 +640,8 @@ def save_model(unet, segmentation_encoder_model, modality_encoder_model, resolut
     gc.collect()
 
 
-def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, device, train_dataloader_len,
-                    gradient_accumulation_steps, batch_size, optimizer=None, optimizer_segmentation_encoder=None, lr_scheduler=None, lr_scheduler_segmentation_encoder=None, ema=None):
+def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, discriminator_model, device, train_dataloader_len,
+                    gradient_accumulation_steps, batch_size, optimizer=None, optimizer_segmentation_encoder=None, optimizer_discriminator=None, lr_scheduler=None, lr_scheduler_segmentation_encoder=None, lr_scheduler_discriminator=None, ema=None):
     # 1. Load checkpoint on CPU to avoid using VRAM
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
@@ -624,12 +650,14 @@ def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_
     segmentation_encoder_model.load_state_dict(checkpoint["segmentation_encoder_model_state_dict"], strict=False)
     modality_encoder_model.load_state_dict(checkpoint["modality_encoder_model_state_dict"], strict=False)
     resolution_encoder_model.load_state_dict(checkpoint["resolution_encoder_model_state_dict"], strict=False)
+    discriminator_model.load_state_dict(checkpoint["discriminator_model_state_dict"], strict=False)
 
     # 3. Move models to GPU
     unet.to(device)
     segmentation_encoder_model.to(device)
     modality_encoder_model.to(device)
     resolution_encoder_model.to(device)
+    discriminator_model.to(device)
 
     # 4. EMA (optional)
     if ema is not None and "ema_state_dict" in checkpoint:
@@ -654,12 +682,23 @@ def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_
                 if isinstance(v, torch.Tensor):
                     state[k] = v.to(device)
 
+    if optimizer_discriminator is not None and "optimizer_discriminator_state_dict" in checkpoint:
+        optimizer_discriminator.load_state_dict(checkpoint["optimizer_discriminator_state_dict"])
+        # Move discriminator optimizer buffers to GPU
+        for state in optimizer_discriminator.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
+
     if lr_scheduler is not None and "lr_scheduler_state_dict" in checkpoint and checkpoint["lr_scheduler_state_dict"] is not None:
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
 
     if lr_scheduler_segmentation_encoder is not None and "lr_scheduler_segmentation_encoder_state_dict" in checkpoint and checkpoint["lr_scheduler_segmentation_encoder_state_dict"] is not None:
         lr_scheduler_segmentation_encoder.load_state_dict(checkpoint["lr_scheduler_segmentation_encoder_state_dict"])
+
+    if lr_scheduler_discriminator is not None and "lr_scheduler_discriminator_state_dict" in checkpoint and checkpoint["lr_scheduler_discriminator_state_dict"] is not None:
+        lr_scheduler_discriminator.load_state_dict(checkpoint["lr_scheduler_discriminator_state_dict"])
 
     # 6. Compute first_epoch and global_step
     global_step = checkpoint["num_train_timesteps"]
@@ -812,6 +851,7 @@ def train(
     autoencoder = models_dict["autoencoder"]
     networks_config = models_dict["networks_config"]
     noise_scheduler = models_dict["noise_scheduler"]
+    discriminator_model = models_dict["discriminator_model"]
     
     
     # ---- instantiate dataset
@@ -874,34 +914,35 @@ def train(
         weight_decay= 1e-4
     )
 
-    if args_train.lr_scheduler is not None:
-        if args_train.lr_scheduler.name == "PolynomialLR":
-            lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=args_train.max_train_steps, power=args_train.lr_scheduler.power)
-        elif args_train.lr_scheduler.name == "CosineAnnealingLR":
-            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args_train.max_train_steps, eta_min=args_train.lr_scheduler.eta_min)
-        elif args_train.lr_scheduler.name == "WarmupCosineLR":
-            lr_scheduler = create_warmup_cosine_scheduler(optimizer,
-                                                          warmup_start_factor=args_train.lr_scheduler.warmup_start_factor,
-                                                          warmup_steps=args_train.lr_scheduler.warmup_steps,
-                                                          max_train_steps=args_train.max_train_steps,
-                                                          eta_min=args_train.lr_scheduler.eta_min)
-            
-    if args_train.lr_scheduler_segmentation_encoder is not None:
-        if args_train.lr_scheduler_segmentation_encoder.name == "PolynomialLR":
-            lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.PolynomialLR(optimizer_segmentation_encoder, total_iters=args_train.max_train_steps, power=args_train.lr_scheduler_segmentation_encoder.power)
-        elif args_train.lr_scheduler_segmentation_encoder.name == "CosineAnnealingLR":
-            lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_segmentation_encoder, T_max=args_train.max_train_steps, eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
-        elif args_train.lr_scheduler_segmentation_encoder.name == "WarmupCosineLR":
-            lr_scheduler_segmentation_encoder = create_warmup_cosine_scheduler(optimizer_segmentation_encoder,
-                                                                               warmup_start_factor=args_train.lr_scheduler_segmentation_encoder.warmup_start_factor,
-                                                                               warmup_steps=args_train.lr_scheduler_segmentation_encoder.warmup_steps,
-                                                                               max_train_steps=args_train.max_train_steps,
-                                                                               eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
+    optimizer_discriminator = torch.optim.AdamW(
+        discriminator_model.parameters(),
+        lr=args_train.discriminator_lr,
+        betas=(0.0, 0.99),
+        weight_decay=0.0
+    )
 
-                                                
-    else:
-        lr_scheduler = None
-        lr_scheduler_segmentation_encoder = None
+
+    def create_lr_scheduler(optimizer, lr_scheduler_config):
+        if lr_scheduler_config is None:
+            return None
+        if lr_scheduler_config.name == "PolynomialLR":
+            return torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=args_train.max_train_steps, power=lr_scheduler_config.power)
+        elif lr_scheduler_config.name == "CosineAnnealingLR":
+            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args_train.max_train_steps, eta_min=lr_scheduler_config.eta_min)
+        elif lr_scheduler_config.name == "WarmupCosineLR":
+            return create_warmup_cosine_scheduler(optimizer,
+                                                warmup_start_factor=lr_scheduler_config.warmup_start_factor,
+                                                warmup_steps=lr_scheduler_config.warmup_steps,
+                                                max_train_steps=args_train.max_train_steps,
+                                                eta_min=lr_scheduler_config.eta_min)
+        else:
+            return None
+
+
+    lr_scheduler = create_lr_scheduler(optimizer, args_train.lr_scheduler)
+    lr_scheduler_segmentation_encoder = create_lr_scheduler(optimizer_segmentation_encoder, args_train.lr_scheduler_segmentation_encoder)
+    lr_scheduler_discriminator = create_lr_scheduler(optimizer_discriminator, args_train.lr_scheduler_discriminator)
+
 
     # ---- loss function
     loss_pt = torch.nn.MSELoss()
@@ -917,6 +958,8 @@ def train(
     segmentation_encoder_model.to(device)
     modality_encoder_model.to(device)
     resolution_encoder_model.to(device)
+    discriminator_model.to(device)
+
 
     # Initilize ema
     if args_train.use_ema:
@@ -936,6 +979,7 @@ def train(
             segmentation_encoder_model,
             modality_encoder_model,
             resolution_encoder_model,
+            discriminator_model,
             device=device,
             train_dataloader_len=len(train_dataloader),
             gradient_accumulation_steps=args_train.gradient_accumulation_steps,
@@ -944,6 +988,7 @@ def train(
             optimizer_segmentation_encoder=optimizer_segmentation_encoder,
             lr_scheduler=lr_scheduler,
             lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
+            lr_scheduler_discriminator=lr_scheduler_discriminator,
             ema=ema
         )
 
@@ -954,6 +999,8 @@ def train(
         segmentation_encoder_model.load_state_dict(checkpoint["segmentation_encoder_model_state_dict"], strict=False)
         modality_encoder_model.load_state_dict(checkpoint["modality_encoder_model_state_dict"], strict=False)
         resolution_encoder_model.load_state_dict(checkpoint["resolution_encoder_model_state_dict"], strict=False)
+        if "discriminator_model_state_dict" in checkpoint:
+            discriminator_model.load_state_dict(checkpoint["discriminator_model_state_dict"], strict=False)
         if args_train.use_ema and "ema_state_dict" in checkpoint:
             ema.shadow = checkpoint["ema_state_dict"]
             print("EMA state loaded from checkpoint")
@@ -963,15 +1010,14 @@ def train(
     segmentation_encoder_model.train()  
     modality_encoder_model.train()
     resolution_encoder_model.train()
-
+    discriminator_model.train()
     # ---- memory reduction
     # -------- automatic mixed precision
     if args_train.amp:
-        scaler = GradScaler()
+        scaler = GradScaler() # just one scaler for everything?
     else:
         scaler = None
     gradient_accumulation_count = 0
-
 
 
     # ---- training loop
@@ -984,33 +1030,42 @@ def train(
     for epoch in range(first_epoch, max_epochs):
         for batch in train_dataloader:
 
-            # prepare inputs
+            # ============================================================
+            # PREPARE INPUTS
+            # ============================================================
             latents = batch["latent"].to(device)
             condition_modality_idx = batch["modality_idx"].to(device)
             condition_resolution_idx = batch["resolution_idx"].to(device)
 
-            # Forward pass
+            # ============================================================
+            # FORWARD DIFFUSION
+            # ============================================================
             with autocast("cuda", enabled=args_train.amp):
-                # generate noise and timesteps with dedicate generatos and in the cpu for reproducibility
+
+                # --------------------------------------------------------
+                # noise + timesteps
+                # --------------------------------------------------------
                 noise = torch.randn(latents.shape, device="cpu", generator=gen_noise).to(device)
                 if isinstance(noise_scheduler, RFlowScheduler):
                     timesteps = noise_scheduler.sample_timesteps(latents)
                 else:
                     timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device="cpu", generator=gen_t).long().to(device)
 
+                # --------------------------------------------------------
+                # noisy latent
+                # --------------------------------------------------------
                 noisy_latent = noise_scheduler.add_noise(original_samples=latents, noise=noise, timesteps=timesteps)
                 
+                # --------------------------------------------------------
+                # condition embeddings
+                # --------------------------------------------------------
                 segmentation_embedding = segmentation_encoder_model(batch["segmentation"].to(device))
                 modality_embedding = modality_encoder_model(condition_modality_idx)
                 resolution_embedding = resolution_encoder_model(condition_resolution_idx)
 
-                # if batch['modality'][0] == "T1W":
-                # print("-"*10, "Modality embedding", "-"*10)
-                # print(f"modality: \n {batch['modality']} \n {batch['modality_idx']} \n {modality_embedding[:,::50]}")
-                # print("-"*10, "Resolution embedding", "-"*10)
-                # print(f"resolution: \n {batch['resolution']} \n {batch['resolution_idx']} \n {resolution_embedding[:,::50]}")
-
-
+                # --------------------------------------------------------
+                # UNet forward
+                # --------------------------------------------------------
                 model_output = unet(noisy_latent, 
                                   timesteps=timesteps,
                                 #   context = volumetric_embedding,
@@ -1020,53 +1075,215 @@ def train(
                                     )
                 
 
-                if noise_scheduler.prediction_type == DDPMPredictionType.EPSILON:
-                    # predict noise
-                    model_gt = noise
-                elif noise_scheduler.prediction_type == DDPMPredictionType.SAMPLE:
-                    # predict sample
-                    model_gt = latents
-                elif noise_scheduler.prediction_type == DDPMPredictionType.V_PREDICTION:
-                    # predict velocity
-                    model_gt = latents - noise
-                else:
-                    raise ValueError(
-                        "noise scheduler prediction type has to be chosen from ",
-                        f"[{DDPMPredictionType.EPSILON},{DDPMPredictionType.SAMPLE},{DDPMPredictionType.V_PREDICTION}]",
-                    )
-
-            loss_noise = loss_pt(model_output.float(), model_gt.float())   # Dividir para escalar la pérdida
-            loss = loss_noise / args_train.gradient_accumulation_steps  # Dividir la pérdida por los pasos de acumulación de gradientes
-
-            # Acumulación de gradientes
-            if args_train.amp:
-                scaler.scale(loss).backward()
+            # ============================================================
+            # DIFFUSION TARGET
+            # ============================================================
+            if noise_scheduler.prediction_type == DDPMPredictionType.EPSILON:
+                # predict noise
+                model_gt = noise
+            elif noise_scheduler.prediction_type == DDPMPredictionType.SAMPLE:
+                # predict sample
+                model_gt = latents
+            elif noise_scheduler.prediction_type == DDPMPredictionType.V_PREDICTION:
+                # predict velocity
+                model_gt = latents - noise
             else:
-                loss.backward()
+                raise ValueError(
+                    "noise scheduler prediction type has to be chosen from ",
+                    f"[{DDPMPredictionType.EPSILON},{DDPMPredictionType.SAMPLE},{DDPMPredictionType.V_PREDICTION}]",
+                )
+
+            # ============================================================
+            # DIFFUSION LOSS
+            # ============================================================
+            loss_noise = loss_pt(model_output.float(), model_gt.float())   
+            # loss = loss_noise / args_train.gradient_accumulation_steps  # Dividir la pérdida por los pasos de acumulación de gradientes
+
+
+            # ============================================================
+            # ADVERSARIAL TRAINING
+            # ============================================================
+            
+            loss_adv = torch.tensor(0.0, device=device)
+            loss_fm = torch.tensor(0.0, device=device)
+            loss_discriminator = torch.tensor(0.0, device=device)
+            
+            
+
+
+            # use_adv = (timesteps.float() / noise_scheduler.num_train_timesteps < 0.2).any()
+            use_adv = True
+            t_norm = timesteps.float() / noise_scheduler.num_train_timesteps    
+            # weight = (1 - t_norm).clamp(0, 1)
+            weight_adv = torch.exp(-5 * t_norm)
+            
+            if use_adv:
+            # SOLVE THE PROBLEM OF 999 and 5
+            
+            # t_norm = timesteps.float() / noise_scheduler.num_train_timesteps
+            # adv_mask = t_norm < 0.2
+            # if adv_mask.any():
+                
+                # --------------------------------------------------------
+                # reconstruct predicted x0
+                # --------------------------------------------------------
+                # with torch.no_grad():
+                #     # next_timesteps = torch.cat((timesteps[1:], torch.tensor([0], dtype=timesteps.dtype).to(device)))
+                #     # latents, _ = noise_scheduler.step(model_output, t, latents, next_t)  # type: ignore
+                #     # t = timesteps.float().view(-1, 1, 1, 1, 1)
+                #     # pred_latent = noisy_latent - t * model_output
+
+                #     # pred_latent = noisy_latent + model_output * (1 / noise_scheduler.num_train_timesteps)
+                #     # real_latent = noisy_latent.detach()
+                #     # fake_latent = pred_latent.detach()
+
+                #     # I stopped here, I will first try with this but with early denoising (close to the original samples) and then I will try with the formula that uses the timesteps to weight the model output
+                #     # pred_latent = noisy_latent + model_output * (timesteps.float() / noise_scheduler.num_train_timesteps)
+                #     _, pred_latent = noise_scheduler.step(model_output, timesteps, noisy_latent)  # same as previous line
+                    
+                # print("Adversarial training step")
+                # print(model_output.shape, '\n', timesteps.float().view(-1, 1, 1, 1, 1).shape, '\n', noisy_latent.shape)
+                _, pred_latent = noise_scheduler.step(model_output, timesteps.float().view(-1, 1, 1, 1, 1), noisy_latent)
+                # ========================================================
+                # DISCRIMINATOR UPDATE
+                # ========================================================
+                with autocast("cuda", enabled=args_train.amp):
+                    real_latent = latents.detach()
+                    fake_latent = pred_latent.detach()
+
+                    # discriminator forward
+                    pred_real = discriminator_model(real_latent)[-1]
+                    pred_fake = discriminator_model(fake_latent)[-1]
+
+                # loss discriminator
+                # loss_discriminator = (
+                #     torch.relu(1.0 - pred_real.float()).mean() +
+                #     torch.relu(1.0 + pred_fake.float()).mean()
+                # )
+                
+                loss_real = torch.relu(1.0 - pred_real.float())
+                loss_fake = torch.relu(1.0 + pred_fake.float())
+                # loss_discriminator = (weight_adv * (loss_real + loss_fake)).mean()
+                # print("loss_real.shape", loss_real.shape, "weight_adv.shape", weight_adv.shape)
+                weight_adv = weight_adv.view(-1, 1, 1, 1, 1)  # reshape weight_adv to match the shape of loss_real and loss_fake
+                loss_discriminator = (weight_adv * (loss_real + loss_fake)).sum() / (weight_adv.sum() + 1e-8)
+
+                # IMPORTANT:
+                # divide discriminator loss for gradient accumulation
+                loss_discriminator = loss_discriminator / args_train.gradient_accumulation_steps
+                    
+                # backward discriminator
+                if args_train.amp:
+                    scaler.scale(loss_discriminator).backward()
+                else:
+                    loss_discriminator.backward()
+                    
+                # optimizer_discriminator.zero_grad(set_to_none=True)
+
+                # ========================================================
+                # GENERATOR ADVERSARIAL LOSSES
+                # ========================================================
+                with autocast("cuda", enabled=args_train.amp):
+                    # IMPORTANT:
+                    # no detach here because generator needs gradients
+                    # _, pred_latent = noise_scheduler.step(model_output, timesteps, noisy_latent)  # same as previous line
+                
+                    fake_outputs_g = discriminator_model(pred_latent)
+                    
+                    # real_outputs_g = discriminator_model(latents)
+
+                pred_fake_g = fake_outputs_g[-1].float()
+
+                # generator adversarial loss
+                # loss_adv = -pred_fake_g.mean()
+                # loss_adv = (weight * -pred_fake_g).mean()
+                loss_adv = (weight_adv * -pred_fake_g).sum() / (weight_adv.sum() + 1e-8)
+
+                # feature matching
+                # loss_fm = 0.0
+                # for rf, ff in zip(real_outputs_g[:-1],fake_outputs_g[:-1]):
+                #     loss_fm += torch.mean(torch.abs(rf.detach().float() - ff.float()))
+
+                # final generator loss
+                loss_generator = (
+                    loss_noise
+                    + args_train.loss_weights.adv * loss_adv
+                    # + args_train.loss_weights.fm * loss_fm
+                )
+            # ============================================================
+            # END OF ADVERSARIAL TRAINING
+            # ============================================================
+            
+            # ============================================================
+            # GENERATOR GRADIENT ACCUMULATION
+            # ============================================================
+                
+            loss_generator = (loss_generator / args_train.gradient_accumulation_steps)
+
+            if args_train.amp:
+                scaler.scale(loss_generator).backward()
+            else:
+                loss_generator.backward()
 
             gradient_accumulation_count += 1  # Contador de pasos acumulados
 
-            # Solo se actualizan los pesos cada `gradient_accumulation_steps` pasos
+
+
+
+            # ============================================================
+            # OPTIMIZER STEP
+            # ============================================================
             if gradient_accumulation_count % args_train.gradient_accumulation_steps == 0:
-                # Gradient clipping
+
+
                 if args_train.amp:
+                    # --------------------------------------------------------
+                    # unscale before clipping
+                    # --------------------------------------------------------
                     scaler.unscale_(optimizer)  # Desescalar antes de clipping
                     scaler.unscale_(optimizer_segmentation_encoder)
+                    if use_adv:
+                        scaler.unscale_(optimizer_discriminator)
+                        
+                    # --------------------------------------------------------
+                    # gradient clipping
+                    # --------------------------------------------------------
                     torch.nn.utils.clip_grad_norm_(
-                        list(unet.parameters()) + list(segmentation_encoder_model.parameters()) + list(modality_encoder_model.parameters()) + list(resolution_encoder_model.parameters()),
+                        list(unet.parameters()) + 
+                        list(segmentation_encoder_model.parameters()) + 
+                        list(modality_encoder_model.parameters()) + 
+                        list(resolution_encoder_model.parameters()), # shound we also clip the discriminator parameters?
                         max_norm=1.0
                     )
                            
+                           
+                # --------------------------------------------------------
+                # generator optimizer step
+                # --------------------------------------------------------
                 if args_train.amp:
                     scaler.step(optimizer)
                     scaler.step(optimizer_segmentation_encoder)
+                    if use_adv:
+                        scaler.step(optimizer_discriminator)
+                    
                     scaler.update()
                 else:
                     optimizer.step()
                     optimizer_segmentation_encoder.step()
+                    
+                    if use_adv:
+                        optimizer_discriminator.step()
+
+
+                # --------------------------------------------------------
+                # zero grad
+                # --------------------------------------------------------
                 optimizer.zero_grad(set_to_none=True)
                 optimizer_segmentation_encoder.zero_grad(set_to_none=True)
                 
+                if use_adv:
+                    optimizer_discriminator.zero_grad(set_to_none=True)
+                    
                 # update ema
                 if args_train.use_ema:
                     ema.update(step=global_step)
@@ -1075,21 +1292,27 @@ def train(
                     lr_scheduler.step()
                 if lr_scheduler_segmentation_encoder is not None:
                     lr_scheduler_segmentation_encoder.step()
+                if use_adv and lr_scheduler_discriminator is not None:
+                    lr_scheduler_discriminator.step()
 
                 gradient_accumulation_count = 0  # Reiniciar el contador
 
                 # update writter 
                 if global_step % 10 == 0:
-                    writer.add_scalar("Loss/train", loss.item(), global_step)
+                    writer.add_scalar("Loss/train", loss_generator.item(), global_step)
+                    writer.add_scalar("Loss_noise/train", loss_noise.item(), global_step)
+                    writer.add_scalar("Loss_adv/train", loss_adv.item(), global_step)
                     writer.add_scalar("Learning_rate", optimizer.param_groups[0]["lr"], global_step)
                     writer.add_scalar("Time_steps", timesteps[0], global_step)
 
                 # update progress bar 
                 progress_bar.update(1)
 
-                logs = {"0loss": loss.detach().item(), 
-                        "1mod": [modality for modality in batch["modality"]],
-                        "1id": [f'{__id[:4]}' for __id in batch["subject_id"]], 
+                logs = {"0loss": loss_generator.detach().item(), 
+                        "1loss_noise": loss_noise.detach().item(),
+                        "2loss_adv": loss_adv.detach().item(),
+                        "3mod": [modality for modality in batch["modality"]],
+                        "4id": [f'{__id[:4]}' for __id in batch["subject_id"]], 
                         # **logs_conditions,
                         }
                 
@@ -1101,16 +1324,20 @@ def train(
                 # save the model in intervals
                 if global_step % args_train.save_checkpoint_interval == 0:
                     save_model(unet=unet, 
-                               segmentation_encoder_model=segmentation_encoder_model, 
-                               modality_encoder_model=modality_encoder_model, 
-                               resolution_encoder_model=resolution_encoder_model, 
-                               optimizer=optimizer,
+                                segmentation_encoder_model=segmentation_encoder_model, 
+                                modality_encoder_model=modality_encoder_model, 
+                                resolution_encoder_model=resolution_encoder_model, 
+                                discriminator_model=discriminator_model,
+                                optimizer=optimizer,
                                 optimizer_segmentation_encoder=optimizer_segmentation_encoder, 
-                               lr_scheduler=lr_scheduler, 
+                                optimizer_discriminator=optimizer_discriminator,
+                                lr_scheduler=lr_scheduler, 
                                 lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
-                               global_step=global_step, 
-                               out_model_path=_checkpoint_dir_name, 
-                               ema=ema)
+                                lr_scheduler_discriminator=lr_scheduler_discriminator,
+                                global_step=global_step, 
+                                out_model_path=_checkpoint_dir_name, 
+                                ema=ema)
+
 
                 # Generar imágenes en intervalos
                 if args_train.initial_val or global_step % args_train.val_interval == 0:
@@ -1161,10 +1388,13 @@ def train(
                 segmentation_encoder_model=segmentation_encoder_model, 
                 modality_encoder_model=modality_encoder_model, 
                 resolution_encoder_model=resolution_encoder_model, 
+                discriminator_model=discriminator_model,
                 optimizer=optimizer,
                 optimizer_segmentation_encoder=optimizer_segmentation_encoder, 
+                optimizer_discriminator=optimizer_discriminator,
                 lr_scheduler=lr_scheduler, 
                 lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
+                lr_scheduler_discriminator=lr_scheduler_discriminator,
                 global_step=global_step, 
                 out_model_path=_checkpoint_dir_name, 
                 ema=ema)
@@ -1174,10 +1404,9 @@ def train(
 
 
 
-
 args_train = {
     # directories 
-    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test2",
+    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1_adversarial_loss",
     "checkpoints_dir_name": "check_points",
     "logs_dir_name": "logs",
     "val_imgs_dir_name": "val_imgs",
@@ -1194,44 +1423,45 @@ args_train = {
 
     # ---- Training stability
     "batch_size": 6, #6 
-    "gradient_accumulation_steps": 2,#2,
+    "gradient_accumulation_steps": 1,#2,
     "use_ema": True,
     "ema_params": {
         "decay": 0.999,
-        "warm_up_steps": 2000,
-        "warm_up_decay": 0.5,
+        "warm_up_steps": 50000,
+        "warm_up_decay": 0.3,
     },
 
+
     # ---- optimizer
-    "lr":  1e-4, # for maisi 1e-3 for maisi 1e-4 # for blsmd 2.5e-5
-    "segmentation_encoder_lr": 5e-5, # 1e-4 for maisi, 1e-5 for blsmd
-    # "lr":  1e-3, # for maisi 1e-3 for maisi 1e-4 # for blsmd 2.5e-5
-    # "lr":  2.5e-5, # for maisi 1e-3 for maisi 1e-4 # for blsmd 2.5e-5
+    "lr":  5e-5, 
+    "segmentation_encoder_lr": 1e-5,
+    "discriminator_lr": 1e-4, 
 
     # ---- lr_scheduler
-    # "lr_scheduler": None,
+    "lr_scheduler": None,
+    "lr_scheduler_segmentation_encoder": None,
     # "lr_scheduler": {"name": "PolynomialLR", "power": 2.0},
     # "lr_scheduler": {"name": "CosineAnnealingLR", "eta_min": 1e-6},
-    "lr_scheduler": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-2, "warmup_steps": 500, "eta_min": 1e-6},
-    "lr_scheduler_segmentation_encoder": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-4, "warmup_steps": 500, "eta_min": 1e-6},
+    # "lr_scheduler": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-2, "warmup_steps": 2000, "eta_min": 1e-5},
+    # "lr_scheduler_segmentation_encoder": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-4, "warmup_steps": 2000, "eta_min": 1e-6},
+    "lr_scheduler_discriminator": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-2, "warmup_steps": 2000, "eta_min": 1e-6},
     # "lr_scheduler": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-2, "warmup_steps": 25, "eta_min": 1e-6},
 
 
     # ---- pretrained_model
     # "load_pretrained_model_from": "/home/agustin/phd/synthesis/tests/D3/maisi/understanding_training/no_synthsr/aaco5590_dataset_no_outliers_bfc/models/rflow/check_points/model_200000.pt",
-    # "load_pretrained_model_from": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_20.pt",
-    "load_pretrained_model_from": None, # not working
+    "load_pretrained_model_from": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test2/check_points/model_195000.pt", # not working
 
 
     # ---- resume from checkpoint
-    "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_70000.pt",
-    # "resume_from_checkpoint_path_name": None, # not working
+    # "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_70000.pt",
+    "resume_from_checkpoint_path_name": None, # not working
 
     # reproducibility
     "seed": 42,
 
     # validation
-    "val_interval": 1000,
+    "val_interval": 500,
     "initial_val": True, # remember drop out
     # "validation_first": True, # if True, the model will be validated before the first training step, if False, the model will be validated after the first training step
     "val_seeds": [0],#[0,12357], # seeds for the noise generation during validation
@@ -1253,6 +1483,8 @@ args_train = {
         # "mse": 1.0,
         # "charbonnier": 1.0,
         # "ssim": 0.1,
+        "adv":1e-3,
+        # "fm":1e-2,
 
     },
 
@@ -1343,3 +1575,114 @@ train(
 #         inter_loss = inter_loss / max(count, 1)
 
 #     return intra_loss, inter_loss
+
+
+
+                # for module in discriminator_model.modules():
+                #     if isinstance(module, torch.nn.Conv3d):
+                #         torch.nn.utils.spectral_norm(module)
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+
+
+
+
+                
+                
+#  t_norm = timesteps.float() / noise_scheduler.num_train_timesteps
+#             adv_mask = t_norm < 0.2
+#             if adv_mask.any():
+#                 valid_idx = adv_mask.nonzero(as_tuple=True)[0]
+                
+#                 latent_adv = latents[valid_idx]
+#                 model_output_adv = model_output[valid_idx]
+#                 timesteps_adv = timesteps[valid_idx]
+#                 noisy_latent_adv = noisy_latent[valid_idx]
+                            
+#                 # --------------------------------------------------------
+#                 # reconstruct predicted x0
+#                 # --------------------------------------------------------
+#                 with torch.no_grad():
+#                     # next_timesteps = torch.cat((timesteps[1:], torch.tensor([0], dtype=timesteps.dtype).to(device)))
+#                     # latents, _ = noise_scheduler.step(model_output, t, latents, next_t)  # type: ignore
+#                     # t = timesteps.float().view(-1, 1, 1, 1, 1)
+#                     # pred_latent = noisy_latent - t * model_output
+
+#                     # pred_latent = noisy_latent + model_output * (1 / noise_scheduler.num_train_timesteps)
+#                     # real_latent = noisy_latent.detach()
+#                     # fake_latent = pred_latent.detach()
+
+#                     # I stopped here, I will first try with this but with early denoising (close to the original samples) and then I will try with the formula that uses the timesteps to weight the model output
+#                     # pred_latent = noisy_latent + model_output * (timesteps.float() / noise_scheduler.num_train_timesteps)
+#                     _, pred_latent = noise_scheduler.step(model_output_adv, timesteps_adv, noisy_latent_adv)  # same as previous line
+                    
+#                 # ========================================================
+#                 # DISCRIMINATOR UPDATE
+#                 # ========================================================
+#                 with autocast("cuda", enabled=args_train.amp):
+#                     real_latent = latent_adv.detach()
+#                     fake_latent = pred_latent.detach()
+
+#                     # discriminator forward
+#                     pred_real = discriminator_model(real_latent)[-1]
+#                     pred_fake = discriminator_model(fake_latent)[-1]
+
+#                 # loss discriminator
+#                 loss_discriminator = (
+#                     torch.relu(1.0 - pred_real.float()).mean() +
+#                     torch.relu(1.0 + pred_fake.float()).mean()
+#                 )
+
+#                 # IMPORTANT:
+#                 # divide discriminator loss for gradient accumulation
+#                 loss_discriminator = loss_discriminator / args_train.gradient_accumulation_steps
+                    
+#                 # backward discriminator
+#                 if args_train.amp:
+#                     scaler.scale(loss_discriminator).backward()
+#                 else:
+#                     loss_discriminator.backward()
+                    
+#                 # optimizer_discriminator.zero_grad(set_to_none=True)
+
+#                 # ========================================================
+#                 # GENERATOR ADVERSARIAL LOSSES
+#                 # ========================================================
+#                 with autocast("cuda", enabled=args_train.amp):
+#                     # IMPORTANT:
+#                     # no detach here because generator needs gradients
+#                     fake_outputs_g = discriminator_model(pred_latent)
+#                     real_outputs_g = discriminator_model(real_latent)
+
+#                 pred_fake_g = fake_outputs_g[-1].float()
+
+#                 # generator adversarial loss
+#                 loss_adv = -pred_fake_g.mean()
+
+#                 # feature matching
+#                 loss_fm = 0.0
+#                 for rf, ff in zip(real_outputs_g[:-1],fake_outputs_g[:-1]):
+#                     loss_fm += torch.mean(torch.abs(rf.detach().float() - ff.float()))
+
+#                 # final generator loss
+#                 loss_generator = (
+#                     loss_noise
+#                     + args_train.loss_weights.adv * loss_adv
+#                     + args_train.loss_weights.fm * loss_fm
+#                 )
+#             # ============================================================
+#             # END OF ADVERSARIAL TRAINING
+#             # ============================================================
+
+
+
+# https://docs.pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html

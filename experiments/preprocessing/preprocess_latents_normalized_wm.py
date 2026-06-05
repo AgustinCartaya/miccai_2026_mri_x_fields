@@ -34,18 +34,18 @@ def preprocess_latents(split="train"):
     csv_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/{split}_data.csv"
     df = pd.read_csv(csv_path)#.head(1)
 
-    base_output_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/{split}_data/preprocessed/maisi_latents_normalized_wm"
-    # base_output_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/{split}_data/preprocessed/supersynth"
+    base_output_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/pr_{split}_data/preprocessed/maisi_latents_normalized_wm"
+    # base_output_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/{split}_data/preprocessed/maisi_latents_normalized_wm"
     bar = tqdm(total=df.shape[0], desc="Preprocessing images with mri_super_synth")
     
     latent_paths = []
     for index, row in tqdm(df.iterrows(), total=df.shape[0]):
-        subject_id = row['subject_id']
+        subject_id = row['iid']
         resolution = row['resolution']
         modality = row['modality']
         # split = row['split']
-        img_path = row['path']
-        seg_path = row['segmentation_path']
+        img_path = row['org_img_path']
+        seg_path = row['seg_synthseg_path']
 
 
         # print(type(subject_id), type(resolution), type(modality), type(split), type(img_path))
@@ -88,4 +88,5 @@ def preprocess_latents(split="train"):
 if __name__ == "__main__":
     # preprocess_latents(split="train")
     # preprocess_latents(split="val")
-    preprocess_latents(split="pr_train")
+    preprocess_latents(split="train")
+    #REMEMBER TO CHANGE THE FOLDER NAME OF PR_TRAIN_DATA TO TRAIN_DATA

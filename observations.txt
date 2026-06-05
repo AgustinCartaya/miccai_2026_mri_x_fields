@@ -4,3 +4,43 @@ Training to directly convert from any res to 7T
 - best apoch around 5000 then starts to decrease and become blurry
 - 0.1 is better predicted when trained with higer resolutions as input x = [0.1, 1.5, 3, 5] better than [0.1] only
 - same for 5T, maybe is the the amount of data
+
+
+mask conditionned diffsuon model
+Training the diffusion model without the mask embedding and concatenating the mask at the beginning is fine
+important to optimize the learning rate
+
+
+TODO:
+Remove mask embedding  - Done
+play with the scheduler and ema - Done
+/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/scripts/segconcatenated_mod_res_priors.py
+
+study normalization problem with T1 T2 and Flair
+
+
+SUBMISSION:
+Follow the data structure on github
+the zip should be called task1
+the forlder should be called task1
+only 30 center slices are evaluated
+
+
+TODO
+- adapt famework for task 2
+easy for 0.1 -> 3,5,7, need test 2 for for 0.1 to 1.5
+
+- change the current framework to accept more detailed segmentation
+from 3 to 15?
+
+"surrounding_csf_vol", 
+"cortical_gm_vol", 
+"cerebral_wm_vol", 
+"ventricles" : "lateral_ventricles_vol", "third_ventricle_vol", "fourth_ventricle_vol", "inferior_lateral_ventricles"
+"sub_cortial_structures: "thalamus_vol", "hippocampus_vol", "amygdala_vol", "putamen_vol", "pallidum_vol", "caudate_vol", "accumbens_area_vol", "ventral_dc_vol",
+"cerebellum_gm_vol", 
+"cerebellum_wm_vol", 
+"brainstem_vol"
+
+
+

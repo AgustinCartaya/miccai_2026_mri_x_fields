@@ -29,12 +29,78 @@ sys.path.append('/home/agustin/phd/synthesis')
 # table columns: subject_id, resolution, modlity, split, path
 
 
-def create_validation_csv():
+# def create_validation_csv():
+#     modalitites = ['T1W', 'T2W', 'T2FLAIR']
+#     resolutions = [0.1, 1.5, 3, 5, 7]
+#     splits = ['train', 'val']
+
+#     base_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/val_data/rawdata"
+#     csv_list = []
+
+#     for modality in modalitites:
+#         mod_path = os.path.join(base_path, modality)
+#         for resolution in resolutions:
+#             res_path = os.path.join(mod_path, f"{resolution}T")
+#             # read all .nii.gz files in res_path
+#             files = [f for f in os.listdir(res_path) if f.endswith('.nii.gz')]
+            
+#             for file in tqdm(files):
+#                 # the id is the last 4 characters before the .nii.gz
+#                 subject_id = file.replace('.nii.gz', '')[-4:]
+#                 # print(type(subject_id))
+#                 img_data = {
+#                     'subject_id': f"S{subject_id}",
+#                     'resolution': resolution,
+#                     'modality': str(modality),
+#                     'split': 'val',
+#                     'path': os.path.join(res_path, file)
+#                 }
+#                 csv_list.append(img_data)
+#     df = pd.DataFrame(csv_list)
+#     # order by subject_id, modality, resolution
+#     df = df.sort_values(by=['subject_id', 'modality', 'resolution'])
+#     df.to_csv(os.path.join(base_path, '/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/val_data.csv'), index=False)
+
+# def create_train_csv():
+#     modalitites = ['T1W', 'T2W', 'T2FLAIR']
+#     resolutions = [0.1, 1.5, 3, 5, 7]
+#     splits = ['train', 'val']
+
+#     base_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/train_data/rawdata"
+#     csv_list = []
+
+#     for modality in modalitites:
+#         mod_path = os.path.join(base_path, modality)
+#         for resolution in resolutions:
+#             res_path = os.path.join(mod_path, f"{resolution}T")
+#             # read all .nii.gz files in res_path
+#             files = [f for f in os.listdir(res_path) if f.endswith('.nii.gz')]
+            
+#             for file in tqdm(files):
+#                 # the id is the last 4 characters before the .nii.gz
+#                 subject_id = file.replace('.nii.gz', '')
+#                 # print(type(subject_id))
+#                 img_data = {
+#                     'subject_id': f"S{subject_id}",
+#                     'resolution': resolution,
+#                     'modality': str(modality),
+#                     'split': 'train',
+#                     'path': os.path.join(res_path, file)
+#                 }
+#                 csv_list.append(img_data)
+#     df = pd.DataFrame(csv_list)
+#     # order by subject_id, modality, resolution
+#     df = df.sort_values(by=['subject_id', 'modality', 'resolution'])
+#     df.to_csv(os.path.join(base_path, '/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data.csv'), index=False)
+
+
+
+
+def create_csv(base_path, output_csv_path=None, split='train', paired=False):
     modalitites = ['T1W', 'T2W', 'T2FLAIR']
     resolutions = [0.1, 1.5, 3, 5, 7]
-    splits = ['train', 'val']
+    # splits = ['train', 'val']
 
-    base_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/val_data/rawdata"
     csv_list = []
 
     for modality in modalitites:
@@ -46,85 +112,22 @@ def create_validation_csv():
             
             for file in tqdm(files):
                 # the id is the last 4 characters before the .nii.gz
-                subject_id = file.replace('.nii.gz', '')[-4:]
+                iid = file.replace('.nii.gz', '')
+                sid = iid.split('_')[-1]
                 # print(type(subject_id))
                 img_data = {
-                    'subject_id': f"S{subject_id}",
+                    'sid': f"S{sid}",
+                    'paired': int(paired),
                     'resolution': resolution,
                     'modality': str(modality),
-                    'split': 'val',
-                    'path': os.path.join(res_path, file)
+                    'split': split,
+                    'iid': iid,
+                    'org_img_path': os.path.join(res_path, file)
                 }
                 csv_list.append(img_data)
     df = pd.DataFrame(csv_list)
     # order by subject_id, modality, resolution
-    df = df.sort_values(by=['subject_id', 'modality', 'resolution'])
-    df.to_csv(os.path.join(base_path, '/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/val_data.csv'), index=False)
-
-def create_train_csv():
-    modalitites = ['T1W', 'T2W', 'T2FLAIR']
-    resolutions = [0.1, 1.5, 3, 5, 7]
-    splits = ['train', 'val']
-
-    base_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/train_data/rawdata"
-    csv_list = []
-
-    for modality in modalitites:
-        mod_path = os.path.join(base_path, modality)
-        for resolution in resolutions:
-            res_path = os.path.join(mod_path, f"{resolution}T")
-            # read all .nii.gz files in res_path
-            files = [f for f in os.listdir(res_path) if f.endswith('.nii.gz')]
-            
-            for file in tqdm(files):
-                # the id is the last 4 characters before the .nii.gz
-                subject_id = file.replace('.nii.gz', '')
-                # print(type(subject_id))
-                img_data = {
-                    'subject_id': f"S{subject_id}",
-                    'resolution': resolution,
-                    'modality': str(modality),
-                    'split': 'train',
-                    'path': os.path.join(res_path, file)
-                }
-                csv_list.append(img_data)
-    df = pd.DataFrame(csv_list)
-    # order by subject_id, modality, resolution
-    df = df.sort_values(by=['subject_id', 'modality', 'resolution'])
-    df.to_csv(os.path.join(base_path, '/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data.csv'), index=False)
-
-
-
-
-def create_csv(base_path, output_csv_path=None):
-    modalitites = ['T1W', 'T2W', 'T2FLAIR']
-    resolutions = [0.1, 1.5, 3, 5, 7]
-    splits = ['train', 'val']
-
-    csv_list = []
-
-    for modality in modalitites:
-        mod_path = os.path.join(base_path, modality)
-        for resolution in resolutions:
-            res_path = os.path.join(mod_path, f"{resolution}T")
-            # read all .nii.gz files in res_path
-            files = [f for f in os.listdir(res_path) if f.endswith('.nii.gz')]
-            
-            for file in tqdm(files):
-                # the id is the last 4 characters before the .nii.gz
-                subject_id = file.replace('.nii.gz', '')
-                # print(type(subject_id))
-                img_data = {
-                    'subject_id': f"S{subject_id}",
-                    'resolution': resolution,
-                    'modality': str(modality),
-                    'split': 'train',
-                    'path': os.path.join(res_path, file)
-                }
-                csv_list.append(img_data)
-    df = pd.DataFrame(csv_list)
-    # order by subject_id, modality, resolution
-    df = df.sort_values(by=['subject_id', 'modality', 'resolution'])
+    df = df.sort_values(by=['sid', 'modality', 'resolution'])
     if output_csv_path:
         df.to_csv(output_csv_path, index=False)
     return df
@@ -134,14 +137,23 @@ def create_csv(base_path, output_csv_path=None):
 # create_validation_csv()
 # create_train_csv()
 
-p_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/zip/training/unzip/release_20260414/Training_prospective"
-r_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/zip/training/unzip/release_20260414/Training_retrospective"
-p_df = create_csv(p_path)
-r_df = create_csv(r_path)
 
-output_csv_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/pr_train_data.csv"
-final_df = pd.concat([p_df, r_df], ignore_index=True)
+# # PR and RE train data
+# p_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/zip/training/unzip/release_20260414/Training_prospective"
+# r_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/zip/training/unzip/release_20260414/Training_retrospective"
+# p_df = create_csv(p_path)
+# r_df = create_csv(r_path)
 
-# remove duplicates subject_id, modality, resolution, keep the first one
-final_df = final_df.drop_duplicates(subset=['subject_id', 'modality', 'resolution'], keep='first')
-final_df.to_csv(output_csv_path, index=False)
+# output_csv_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/pr_train_data.csv"
+# final_df = pd.concat([p_df, r_df], ignore_index=True)
+
+# # remove duplicates sid, modality, resolution, keep the first one
+# final_df = final_df.drop_duplicates(subset=['sid', 'modality', 'resolution'], keep='first')
+# final_df.to_csv(output_csv_path, index=False)
+
+
+
+# Val data
+p_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/val_data/rawdata"
+output_path ="/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/val_data_.csv"
+p_df = create_csv(p_path, output_csv_path=output_path, split='val', paired=False)

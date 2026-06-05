@@ -3,9 +3,9 @@ import numpy as np
 
 
 
-# DESIRED_SIZE = (384, 448, 384) # padding
-DESIRED_SIZE = (320,384,320) # cropping
-
+DESIRED_SIZE = (384, 448, 384) # padding
+# DESIRED_SIZE = (320,384,320) # cropping TOO SMALL
+ORIGINAL_SIZE = (364, 436, 364)
 
 def update_affine(original_affine: np.ndarray, offset: tuple) -> np.ndarray:
     """
@@ -131,3 +131,6 @@ def prepare_img(img, desired_size=DESIRED_SIZE, normalize=True):
         img = robust_normalize(img, percentile=(0,100), strictly_positive=True)
     return img
 
+def postprocess_img(img, original_size=ORIGINAL_SIZE):
+    img = resize_center_crop_pad(img, original_size)[0]
+    return img

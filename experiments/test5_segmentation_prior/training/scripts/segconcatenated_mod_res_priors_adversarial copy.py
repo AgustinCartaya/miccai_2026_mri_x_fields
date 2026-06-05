@@ -42,8 +42,9 @@ import utils.data_normalization as data_normalization
 from monai.bundle import ConfigParser
 
 import  networks_declaration.diffusion_model_unet_maisi_mask_seg as diffusion_model_unet_maisi
-import  networks_declaration.segmentation_encoder as segmentation_encoder
+# import  networks_declaration.segmentation_encoder as segmentation_encoder
 import  networks_declaration.conditions_model as conditions_model
+import  networks_declaration.patchgan_discriminator as patchgan_discriminator
 
 
 # import attention_controller as attention_controller
@@ -74,14 +75,14 @@ def set_seed(seed: int):
 
 
 
-def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
+def instantiate_unconditioned_models(device, noise_scheduler_type="rflow", nb_seg_classes=3, nb_resolutions=5, nb_modalities=3):
 
     networks_config =  {
         
         "diffusion_unet_def": {
             "_target_": "monai.apps.generation.maisi.networks.diffusion_model_unet_maisi.DiffusionModelUNetMaisi",
             "spatial_dims": 3,
-            "in_channels": 4,
+            "in_channels": 4 + nb_seg_classes,  # 4 for the latent and nb_seg_classes for the segmentation conditioning (concatenated)
             "out_channels": 4,
             "num_res_blocks": 2,
             "num_channels": [
@@ -130,26 +131,26 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
 
         },
 
-        "segmentation_encoder_def": { # this is volumetric conditioning
-            "spatial_dims": 3,  # number of conditions
-            "in_channels": 3,
-            "num_res_blocks": 2,  # whether to use self-attention
-            "num_channels": [
-                # 32, 
-                64, 
-                128, 
-                256,
-                512
-            ],  # half of the embedding dimension
-        },
+        # "segmentation_encoder_def": { # this is volumetric conditioning
+        #     "spatial_dims": 3,  # number of conditions
+        #     "in_channels": 3,
+        #     "num_res_blocks": 2,  # whether to use self-attention
+        #     "num_channels": [
+        #         # 32, 
+        #         64, 
+        #         128, 
+        #         256,
+        #         512
+        #     ],  # half of the embedding dimension
+        # },
                 
         "modality_encoder_def": { # this is volumetric conditioning
-            "num_conditions": 3,  # number of conditions
+            "num_conditions": nb_modalities,  # number of conditions
             # "embed_dim": 512,  # this will be automatically set to be the same as the unet embedding dimension
         },
 
         "resolution_encoder_def": { # this is volumetric conditioning
-            "num_conditions": 3,  # number of conditions
+            "num_conditions": nb_resolutions,  # number of conditions
             # "embed_dim": 512,  # this will be automatically set to be the same as the unet embedding dimension
         },
 
@@ -173,6 +174,20 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
         "scale":1.4
         },
 
+        "patchgan_discriminator_def": {
+                    "_target_": "generative.networks.nets.PatchDiscriminator",
+                    "spatial_dims": 3,
+                    "num_channels": 64,
+                    "in_channels": 4,
+                    "out_channels": 1,
+                    "num_layers_d": 3,
+                    "kernel_size": 4,
+                    "activation": ("LEAKYRELU", {"negative_slope": 0.2}),
+                    "norm": "INSTANCE",
+                    "bias": True,
+                    "dropout": 0.0,
+                    "last_conv_kernel_size": 3,
+                }
 
     }
 
@@ -227,12 +242,12 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
     #                                 use_gelu=args.conditions_model.use_gelu
     #                                 )
 
-    segmentation_encoder_model = segmentation_encoder.SegmentationEncoder(
-                                        spatial_dims=args.segmentation_encoder_def.spatial_dims,
-                                        in_channels=args.segmentation_encoder_def.in_channels,
-                                        num_res_blocks=args.segmentation_encoder_def.num_res_blocks,
-                                        num_channels=args.segmentation_encoder_def.num_channels,
-                                    )
+    # segmentation_encoder_model = segmentation_encoder.SegmentationEncoder(
+    #                                     spatial_dims=args.segmentation_encoder_def.spatial_dims,
+    #                                     in_channels=args.segmentation_encoder_def.in_channels,
+    #                                     num_res_blocks=args.segmentation_encoder_def.num_res_blocks,
+    #                                     num_channels=args.segmentation_encoder_def.num_channels,
+    #                                 )
     
     modality_encoder_model = conditions_model.SimpleConditionEmbedding(
                                                                     num_conditions=args.modality_encoder_def.num_conditions,
@@ -243,6 +258,23 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
                                                                     num_conditions=args.resolution_encoder_def.num_conditions,
                                                                     embed_dim=unet.new_time_embed_dim,
                                                                     )
+    
+
+    discriminator_model = patchgan_discriminator.PatchDiscriminator(
+                                            spatial_dims = args.patchgan_discriminator_def.spatial_dims,
+                                            num_channels = args.patchgan_discriminator_def.num_channels,
+                                            in_channels = args.patchgan_discriminator_def.in_channels,
+                                            out_channels = args.patchgan_discriminator_def.out_channels,
+                                            num_layers_d = args.patchgan_discriminator_def.num_layers_d,
+                                            kernel_size = args.patchgan_discriminator_def.kernel_size,
+                                            activation = args.patchgan_discriminator_def.activation,
+                                            norm = args.patchgan_discriminator_def.norm,
+                                            bias = args.patchgan_discriminator_def.bias,
+                                            dropout = args.patchgan_discriminator_def.dropout,
+                                            last_conv_kernel_size = args.patchgan_discriminator_def.last_conv_kernel_size
+                                        )
+
+
     # noise scheduler
     if noise_scheduler_type == "ddim":
         noise_scheduler = parser.get_parsed_content("noise_scheduler", instantiate=True)
@@ -270,10 +302,11 @@ def instantiate_unconditioned_models(device, noise_scheduler_type="rflow"):
 
     return {"unet": unet, 
               "autoencoder": autoencoder, 
-              "segmentation_encoder_model": segmentation_encoder_model,
+            #   "segmentation_encoder_model": segmentation_encoder_model,
             "modality_encoder_model": modality_encoder_model,
             "resolution_encoder_model": resolution_encoder_model,
               "noise_scheduler": noise_scheduler,
+              "discriminator_model": discriminator_model,
               "networks_config": args}
 
 
@@ -285,6 +318,7 @@ class LoadPaths:
                  dataset_path_name, 
                  used_modalities,
                    used_resolutions, 
+                   nb_seg_classes,
                    dataset_filters=None,
                    max_subjects=None):
         """Load the dataset and latents from the specified paths.
@@ -316,16 +350,21 @@ class LoadPaths:
             # self.df = self.df[self.df["subject_id"].isin(self.df["subject_id"].unique()[:max_subjects])]
             self.df = self.df.head(max_subjects)
 
+        self.nb_seg_classes = nb_seg_classes
+
     def get_data(self, split="train"):
         complete_df = self.df.copy()
         complete_df = complete_df[complete_df["split"] == split]
-        
+
+        # order by [sid, resolution, modality, ]
+        complete_df = complete_df.sort_values(by=["sid", "modality", "resolution"])
+
         self.subject_ids = complete_df["sid"].unique()
 
         instances = []
         for i, row in complete_df.iterrows():
             instance_dict = {}
-            latent_path = row["latent_path"]
+            latent_path = row["latent_normalized_wm_path"]
             # verify that the latent path exists
             if not os.path.exists(latent_path):
                 # print(f"Latent path {latent_path} does not exist. Skipping this instance.")
@@ -336,7 +375,7 @@ class LoadPaths:
             instance_dict["modality_idx"] = row["modality_idx"]
             instance_dict["resolution"] = row["resolution"]
             instance_dict["resolution_idx"] = row["resolution_idx"]
-            instance_dict["segmentation_npy_path"] = row["latent_seg_synthseg_path"]
+            instance_dict["segmentation_npy_path"] = row[f"latent_seg_supersynth_merged_{self.nb_seg_classes}_path"]
             instances.append(instance_dict)
         return instances
 
@@ -350,7 +389,8 @@ class PrepareDataset(Dataset):
                  used_resolutions,
                  dataset_filters=None,
                  split="train",
-                 max_subjects=None
+                 max_subjects=None,
+                 nb_seg_classes=3
                  ):
 
         # load data
@@ -358,7 +398,8 @@ class PrepareDataset(Dataset):
                                     used_modalities=used_modalities,
                                     used_resolutions=used_resolutions,
                                   dataset_filters=dataset_filters,
-                                    max_subjects=max_subjects
+                                    max_subjects=max_subjects,
+                                    nb_seg_classes=nb_seg_classes
                                   )
         
         self.train_data = data_loader.get_data(split=split)
@@ -445,7 +486,8 @@ def instantiate_dataset(dataset_path_name, used_modalities, used_resolutions,
                         batch_size, 
                         dataset_filters=None,
                         split="train",
-                        max_subjects=None
+                        max_subjects=None,
+                        nb_seg_classes=3
                         ):
     # ---- Data set creation
     train_dataset = PrepareDataset(
@@ -454,7 +496,8 @@ def instantiate_dataset(dataset_path_name, used_modalities, used_resolutions,
         used_resolutions=used_resolutions,
         dataset_filters=dataset_filters,
         split=split,
-        max_subjects=max_subjects
+        max_subjects=max_subjects,
+        nb_seg_classes=nb_seg_classes
     )
 
     # sampler = MaxPerSubjectSampler(train_dataset, max_per_subject=max_timepoints_per_epoch, shuffle=True, generator=gen_dataloader)
@@ -478,7 +521,7 @@ def validation(
     unet,
     noise_scheduler,
     # conditions_model,
-    segmentation_encoder_model,
+    # segmentation_encoder_model,
     modality_encoder_model,
     resolution_encoder_model,
     autoencoder,
@@ -511,7 +554,8 @@ def validation(
             gen_randn = torch.Generator().manual_seed(seed) 
             latents = torch.randn(_l_shape, generator=gen_randn).half().to(device)
 
-            segmentation_embedding = segmentation_encoder_model(batch["segmentation"].to(device))
+            # segmentation_embedding = segmentation_encoder_model(batch["segmentation"].to(device))
+            segmentation = batch["segmentation"].to(device)
             modality_embedding = modality_encoder_model(batch["modality_idx"].to(device))
             resolution_embedding = resolution_encoder_model(batch["resolution_idx"].to(device))
 
@@ -528,9 +572,10 @@ def validation(
                 for t, next_t in progress_bar:
 
                     model_output = unet(
-                        x=latents,
+                        # x=latents,
+                        x=torch.cat([latents, segmentation], dim=1),
                         timesteps=torch.Tensor((t,)).to(device),
-                        mask_features = segmentation_embedding,
+                        # mask_features = segmentation_embedding,
                         modallity_embedding = modality_embedding,
                         resolution_embedding = resolution_embedding
                     )
@@ -581,18 +626,23 @@ def validation(
 
 
 
-def save_model(unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, optimizer, optimizer_segmentation_encoder, lr_scheduler, lr_scheduler_segmentation_encoder, global_step, out_model_path, ema=None, best=False):  # MOD: se añade parámetro ema
+# def save_model(unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, optimizer, optimizer_segmentation_encoder, lr_scheduler, lr_scheduler_segmentation_encoder, global_step, out_model_path, ema=None, best=False):  # MOD: se añade parámetro ema
+# def save_model(unet, modality_encoder_model, resolution_encoder_model, optimizer, lr_scheduler, global_step, out_model_path, ema=None, best=False):  # MOD: se añade parámetro ema
+def save_model(unet, modality_encoder_model, resolution_encoder_model, discriminator_model, optimizer, optimizer_discriminator, lr_scheduler, lr_scheduler_discriminator, global_step, out_model_path, ema=None, best=False):  # MOD: se añade parámetro ema
     # Guardar el modelo
     unet_state_dict = unet.module.state_dict() if torch.distributed.is_initialized() else unet.state_dict()
     checkpoint = {
         "unet_state_dict": unet_state_dict,
         "optimizer_state_dict": optimizer.state_dict(),
-        "optimizer_segmentation_encoder_state_dict": optimizer_segmentation_encoder.state_dict(),
+        # "optimizer_segmentation_encoder_state_dict": optimizer_segmentation_encoder.state_dict(),
+        "optimizer_discriminator_state_dict": optimizer_discriminator.state_dict(),
         "lr_scheduler_state_dict": lr_scheduler.state_dict() if lr_scheduler is not None else None,
-        "lr_scheduler_segmentation_encoder_state_dict": lr_scheduler_segmentation_encoder.state_dict() if lr_scheduler_segmentation_encoder is not None else None,
-        "segmentation_encoder_model_state_dict": segmentation_encoder_model.state_dict(),
+        # "lr_scheduler_segmentation_encoder_state_dict": lr_scheduler_segmentation_encoder.state_dict() if lr_scheduler_segmentation_encoder is not None else None,
+        "lr_scheduler_discriminator_state_dict": lr_scheduler_discriminator.state_dict() if lr_scheduler_discriminator is not None else None,
+        # "segmentation_encoder_model_state_dict": segmentation_encoder_model.state_dict(),
         "modality_encoder_model_state_dict": modality_encoder_model.state_dict(),
         "resolution_encoder_model_state_dict": resolution_encoder_model.state_dict(),
+        "discriminator_model_state_dict": discriminator_model.state_dict(),
         "num_train_timesteps": global_step,
     }
     # MOD: Agregar los pesos EMA en el checkpoint
@@ -614,22 +664,31 @@ def save_model(unet, segmentation_encoder_model, modality_encoder_model, resolut
     gc.collect()
 
 
-def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, device, train_dataloader_len,
-                    gradient_accumulation_steps, batch_size, optimizer=None, optimizer_segmentation_encoder=None, lr_scheduler=None, lr_scheduler_segmentation_encoder=None, ema=None):
+# def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_encoder_model, resolution_encoder_model, device, train_dataloader_len,
+#                     gradient_accumulation_steps, batch_size, optimizer=None, optimizer_segmentation_encoder=None, lr_scheduler=None, lr_scheduler_segmentation_encoder=None, ema=None):
+    
+# def load_checkpoint(checkpoint_path, unet, modality_encoder_model, resolution_encoder_model, device, train_dataloader_len,
+#                     gradient_accumulation_steps, batch_size, optimizer=None, lr_scheduler=None, ema=None):
+
+def load_checkpoint(checkpoint_path, unet, modality_encoder_model, resolution_encoder_model, discriminator_model, device, train_dataloader_len,
+                    gradient_accumulation_steps, batch_size, optimizer=None, optimizer_discriminator=None, lr_scheduler=None, lr_scheduler_discriminator=None, ema=None):
+    
     # 1. Load checkpoint on CPU to avoid using VRAM
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     # 2. Load weights into models
     unet.load_state_dict(checkpoint["unet_state_dict"], strict=False)
-    segmentation_encoder_model.load_state_dict(checkpoint["segmentation_encoder_model_state_dict"], strict=False)
+    # segmentation_encoder_model.load_state_dict(checkpoint["segmentation_encoder_model_state_dict"], strict=False)
     modality_encoder_model.load_state_dict(checkpoint["modality_encoder_model_state_dict"], strict=False)
     resolution_encoder_model.load_state_dict(checkpoint["resolution_encoder_model_state_dict"], strict=False)
+    discriminator_model.load_state_dict(checkpoint["discriminator_model_state_dict"], strict=False)
 
     # 3. Move models to GPU
     unet.to(device)
-    segmentation_encoder_model.to(device)
+    # segmentation_encoder_model.to(device)
     modality_encoder_model.to(device)
     resolution_encoder_model.to(device)
+    discriminator_model.to(device)
 
     # 4. EMA (optional)
     if ema is not None and "ema_state_dict" in checkpoint:
@@ -646,10 +705,18 @@ def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_
                 if isinstance(v, torch.Tensor):
                     state[k] = v.to(device)
 
-    if optimizer_segmentation_encoder is not None and "optimizer_segmentation_encoder_state_dict" in checkpoint:
-        optimizer_segmentation_encoder.load_state_dict(checkpoint["optimizer_segmentation_encoder_state_dict"])
-        # Move segmentation encoder optimizer buffers to GPU
-        for state in optimizer_segmentation_encoder.state.values():
+    # if optimizer_segmentation_encoder is not None and "optimizer_segmentation_encoder_state_dict" in checkpoint:
+    #     optimizer_segmentation_encoder.load_state_dict(checkpoint["optimizer_segmentation_encoder_state_dict"])
+    #     # Move segmentation encoder optimizer buffers to GPU
+    #     for state in optimizer_segmentation_encoder.state.values():
+    #         for k, v in state.items():
+    #             if isinstance(v, torch.Tensor):
+    #                 state[k] = v.to(device)
+
+    if optimizer_discriminator is not None and "optimizer_discriminator_state_dict" in checkpoint:
+        optimizer_discriminator.load_state_dict(checkpoint["optimizer_discriminator_state_dict"])
+        # Move discriminator optimizer buffers to GPU
+        for state in optimizer_discriminator.state.values():
             for k, v in state.items():
                 if isinstance(v, torch.Tensor):
                     state[k] = v.to(device)
@@ -658,8 +725,11 @@ def load_checkpoint(checkpoint_path, unet, segmentation_encoder_model, modality_
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
 
-    if lr_scheduler_segmentation_encoder is not None and "lr_scheduler_segmentation_encoder_state_dict" in checkpoint and checkpoint["lr_scheduler_segmentation_encoder_state_dict"] is not None:
-        lr_scheduler_segmentation_encoder.load_state_dict(checkpoint["lr_scheduler_segmentation_encoder_state_dict"])
+    # if lr_scheduler_segmentation_encoder is not None and "lr_scheduler_segmentation_encoder_state_dict" in checkpoint and checkpoint["lr_scheduler_segmentation_encoder_state_dict"] is not None:
+    #     lr_scheduler_segmentation_encoder.load_state_dict(checkpoint["lr_scheduler_segmentation_encoder_state_dict"])
+
+    if lr_scheduler_discriminator is not None and "lr_scheduler_discriminator_state_dict" in checkpoint and checkpoint["lr_scheduler_discriminator_state_dict"] is not None:
+        lr_scheduler_discriminator.load_state_dict(checkpoint["lr_scheduler_discriminator_state_dict"])
 
     # 6. Compute first_epoch and global_step
     global_step = checkpoint["num_train_timesteps"]
@@ -804,14 +874,20 @@ def train(
     gen_modality = torch.Generator().manual_seed(args_train.seed)
     gen_resolution = torch.Generator().manual_seed(args_train.seed)
 
-    models_dict = instantiate_unconditioned_models(device, noise_scheduler_type=args_train.noise_scheduler_type)
+    models_dict = instantiate_unconditioned_models(device, 
+                                                   noise_scheduler_type=args_train.noise_scheduler_type, 
+                                                   nb_seg_classes=args_train.nb_seg_classes,
+                                                   nb_modalities=len(args_train.used_modalities),
+                                                   nb_resolutions=len(args_train.used_resolutions)
+                                                   )
     unet = models_dict["unet"]
-    segmentation_encoder_model = models_dict["segmentation_encoder_model"]
+    # segmentation_encoder_model = models_dict["segmentation_encoder_model"]
     modality_encoder_model = models_dict["modality_encoder_model"]
     resolution_encoder_model = models_dict["resolution_encoder_model"]
     autoencoder = models_dict["autoencoder"]
     networks_config = models_dict["networks_config"]
     noise_scheduler = models_dict["noise_scheduler"]
+    discriminator_model = models_dict["discriminator_model"]
     
     
     # ---- instantiate dataset
@@ -822,6 +898,7 @@ def train(
         # latents_path=args_train.latents_path,
         batch_size=args_train.batch_size,
         split="train",
+        nb_seg_classes=args_train.nb_seg_classes,
     )
 
     val_dataloader = instantiate_dataset(
@@ -831,7 +908,8 @@ def train(
         batch_size=1,
         split="val",
         max_subjects=args_train.max_val_subjects,
-        dataset_filters = fc.args_to_dict(args_train.val_dataset_filters)
+        dataset_filters = fc.args_to_dict(args_train.val_dataset_filters),
+        nb_seg_classes=args_train.nb_seg_classes
     
     )
 
@@ -866,42 +944,41 @@ def train(
         weight_decay=0.01
     )
 
-    optimizer_segmentation_encoder = torch.optim.AdamW(
-        segmentation_encoder_model.parameters(),
-        lr=args_train.segmentation_encoder_lr,
-        betas=(0.9, 0.999),
-        eps=1e-8,
-        weight_decay= 1e-4
+    # optimizer_segmentation_encoder = torch.optim.AdamW(
+    #     segmentation_encoder_model.parameters(),
+    #     lr=args_train.segmentation_encoder_lr,
+    #     betas=(0.9, 0.999),
+    #     eps=1e-8,
+    #     weight_decay= 1e-4
+    # )
+
+    optimizer_discriminator = torch.optim.AdamW(
+        discriminator_model.parameters(),
+        lr=args_train.discriminator_lr,
+        betas=(0.0, 0.99),
+        weight_decay=0.0
     )
 
-    if args_train.lr_scheduler is not None:
-        if args_train.lr_scheduler.name == "PolynomialLR":
-            lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=args_train.max_train_steps, power=args_train.lr_scheduler.power)
-        elif args_train.lr_scheduler.name == "CosineAnnealingLR":
-            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args_train.max_train_steps, eta_min=args_train.lr_scheduler.eta_min)
-        elif args_train.lr_scheduler.name == "WarmupCosineLR":
-            lr_scheduler = create_warmup_cosine_scheduler(optimizer,
-                                                          warmup_start_factor=args_train.lr_scheduler.warmup_start_factor,
-                                                          warmup_steps=args_train.lr_scheduler.warmup_steps,
-                                                          max_train_steps=args_train.max_train_steps,
-                                                          eta_min=args_train.lr_scheduler.eta_min)
-            
-    if args_train.lr_scheduler_segmentation_encoder is not None:
-        if args_train.lr_scheduler_segmentation_encoder.name == "PolynomialLR":
-            lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.PolynomialLR(optimizer_segmentation_encoder, total_iters=args_train.max_train_steps, power=args_train.lr_scheduler_segmentation_encoder.power)
-        elif args_train.lr_scheduler_segmentation_encoder.name == "CosineAnnealingLR":
-            lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_segmentation_encoder, T_max=args_train.max_train_steps, eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
-        elif args_train.lr_scheduler_segmentation_encoder.name == "WarmupCosineLR":
-            lr_scheduler_segmentation_encoder = create_warmup_cosine_scheduler(optimizer_segmentation_encoder,
-                                                                               warmup_start_factor=args_train.lr_scheduler_segmentation_encoder.warmup_start_factor,
-                                                                               warmup_steps=args_train.lr_scheduler_segmentation_encoder.warmup_steps,
-                                                                               max_train_steps=args_train.max_train_steps,
-                                                                               eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
+    def create_lr_scheduler(optimizer, lr_scheduler_config):
+        if lr_scheduler_config is None:
+            return None
+        if lr_scheduler_config.name == "PolynomialLR":
+            return torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=args_train.max_train_steps, power=lr_scheduler_config.power)
+        elif lr_scheduler_config.name == "CosineAnnealingLR":
+            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args_train.max_train_steps, eta_min=lr_scheduler_config.eta_min)
+        elif lr_scheduler_config.name == "WarmupCosineLR":
+            return create_warmup_cosine_scheduler(optimizer,
+                                                warmup_start_factor=lr_scheduler_config.warmup_start_factor,
+                                                warmup_steps=lr_scheduler_config.warmup_steps,
+                                                max_train_steps=args_train.max_train_steps,
+                                                eta_min=lr_scheduler_config.eta_min)
+        else:
+            return None
 
-                                                
-    else:
-        lr_scheduler = None
-        lr_scheduler_segmentation_encoder = None
+
+    lr_scheduler = create_lr_scheduler(optimizer, args_train.lr_scheduler)
+    # lr_scheduler_segmentation_encoder = create_lr_scheduler(optimizer_segmentation_encoder, args_train.lr_scheduler_segmentation_encoder)
+    lr_scheduler_discriminator = create_lr_scheduler(optimizer_discriminator, args_train.lr_scheduler_discriminator)
 
     # ---- loss function
     loss_pt = torch.nn.MSELoss()
@@ -914,9 +991,10 @@ def train(
 
     # ---- resume from checkpoint
     unet.to(device)
-    segmentation_encoder_model.to(device)
+    # segmentation_encoder_model.to(device)
     modality_encoder_model.to(device)
     resolution_encoder_model.to(device)
+    discriminator_model.to(device)
 
     # Initilize ema
     if args_train.use_ema:
@@ -932,18 +1010,21 @@ def train(
     if args_train.resume_from_checkpoint_path_name is not None:
         global_step, first_epoch = load_checkpoint(
             args_train.resume_from_checkpoint_path_name,
-            unet,
-            segmentation_encoder_model,
-            modality_encoder_model,
-            resolution_encoder_model,
+            unet=unet,
+            # segmentation_encoder_model,
+            modality_encoder_model=modality_encoder_model,
+            resolution_encoder_model=resolution_encoder_model,
+            discriminator_model=discriminator_model,
             device=device,
             train_dataloader_len=len(train_dataloader),
             gradient_accumulation_steps=args_train.gradient_accumulation_steps,
             batch_size=args_train.batch_size,
             optimizer=optimizer,
-            optimizer_segmentation_encoder=optimizer_segmentation_encoder,
+            optimizer_discriminator=optimizer_discriminator,
+            # optimizer_segmentation_encoder=optimizer_segmentation_encoder,
             lr_scheduler=lr_scheduler,
-            lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
+            # lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
+            lr_scheduler_discriminator=lr_scheduler_discriminator,
             ema=ema
         )
 
@@ -951,18 +1032,21 @@ def train(
         # checkpoint = torch.load(args_train.load_pretrained_model_from, weights_only=False, map_location=device_name)
         checkpoint = torch.load(args_train.load_pretrained_model_from, map_location=device_name)
         unet.load_state_dict(checkpoint["unet_state_dict"], strict=False)
-        segmentation_encoder_model.load_state_dict(checkpoint["segmentation_encoder_model_state_dict"], strict=False)
+        # segmentation_encoder_model.load_state_dict(checkpoint["segmentation_encoder_model_state_dict"], strict=False)
         modality_encoder_model.load_state_dict(checkpoint["modality_encoder_model_state_dict"], strict=False)
         resolution_encoder_model.load_state_dict(checkpoint["resolution_encoder_model_state_dict"], strict=False)
+        if "discriminator_model_state_dict" in checkpoint:
+            discriminator_model.load_state_dict(checkpoint["discriminator_model_state_dict"], strict=False)
         if args_train.use_ema and "ema_state_dict" in checkpoint:
             ema.shadow = checkpoint["ema_state_dict"]
             print("EMA state loaded from checkpoint")
         print(f"Pretrained model loaded from {args_train.load_pretrained_model_from}")
     
     unet.train()
-    segmentation_encoder_model.train()  
+    # segmentation_encoder_model.train()  
     modality_encoder_model.train()
     resolution_encoder_model.train()
+    discriminator_model.train()
 
     # ---- memory reduction
     # -------- automatic mixed precision
@@ -981,115 +1065,293 @@ def train(
         initial=global_step
     )
 
+
+    import torch.nn as nn
+    criterion = nn.BCELoss()
+
+    real_label = 1.0
+    fake_label = 0.0
     for epoch in range(first_epoch, max_epochs):
         for batch in train_dataloader:
 
-            # prepare inputs
-            latents = batch["latent"].to(device)
-            condition_modality_idx = batch["modality_idx"].to(device)
-            condition_resolution_idx = batch["resolution_idx"].to(device)
 
-            # Forward pass
+            ############################
+            # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+            ###########################
+            ## Train with all-real batch
+            optimizer_discriminator.zero_grad(set_to_none=True)
+
+            real_latent = batch["latent"].to(device)
+            b_size = real_latent.size(0)
+
+            label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+
             with autocast("cuda", enabled=args_train.amp):
-                # generate noise and timesteps with dedicate generatos and in the cpu for reproducibility
-                noise = torch.randn(latents.shape, device="cpu", generator=gen_noise).to(device)
-                if isinstance(noise_scheduler, RFlowScheduler):
-                    timesteps = noise_scheduler.sample_timesteps(latents)
-                else:
-                    timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device="cpu", generator=gen_t).long().to(device)
-
-                noisy_latent = noise_scheduler.add_noise(original_samples=latents, noise=noise, timesteps=timesteps)
-                
-                segmentation_embedding = segmentation_encoder_model(batch["segmentation"].to(device))
-                modality_embedding = modality_encoder_model(condition_modality_idx)
-                resolution_embedding = resolution_encoder_model(condition_resolution_idx)
-
-                # if batch['modality'][0] == "T1W":
-                # print("-"*10, "Modality embedding", "-"*10)
-                # print(f"modality: \n {batch['modality']} \n {batch['modality_idx']} \n {modality_embedding[:,::50]}")
-                # print("-"*10, "Resolution embedding", "-"*10)
-                # print(f"resolution: \n {batch['resolution']} \n {batch['resolution_idx']} \n {resolution_embedding[:,::50]}")
+                pred_real = discriminator_model(real_latent)[-1].view(-1)
+            
+            loss_real = criterion(pred_real.float(), label)
+            loss_real.backward()
 
 
-                model_output = unet(noisy_latent, 
-                                  timesteps=timesteps,
+
+
+            ## Train with all-fake batch
+            # Generate batch of latent vectors
+            latents = batch["latent"].to(device)
+
+            # generate noise and timesteps with dedicate generatos and in the cpu for reproducibility
+            noise = torch.randn(latents.shape, device="cpu", generator=gen_noise).to(device)
+            if isinstance(noise_scheduler, RFlowScheduler):
+                timesteps = noise_scheduler.sample_timesteps(latents)
+            else:
+                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device="cpu", generator=gen_t).long().to(device)
+
+
+            ## Train with all-fake batch
+            # Generate batch of latent vectors
+            noisy_latent = noise_scheduler.add_noise(original_samples=latents, noise=noise, timesteps=timesteps)
+            
+            # segmentation_embedding = segmentation_encoder_model(batch["segmentation"].to(device))
+            modality_embedding = modality_encoder_model(batch["modality_idx"].to(device))
+            resolution_embedding = resolution_encoder_model(batch["resolution_idx"].to(device))
+
+            with autocast("cuda", enabled=args_train.amp):
+
+                model_output = unet(
+                                torch.cat([noisy_latent, batch["segmentation"].to(device)], dim=1), 
+                                    timesteps=timesteps,
                                 #   context = volumetric_embedding,
-                                    mask_features = segmentation_embedding,
+                                    # mask_features = segmentation_embedding,
                                     modallity_embedding = modality_embedding,
                                     resolution_embedding = resolution_embedding
                                     )
-                
+            
 
-                if noise_scheduler.prediction_type == DDPMPredictionType.EPSILON:
-                    # predict noise
-                    model_gt = noise
-                elif noise_scheduler.prediction_type == DDPMPredictionType.SAMPLE:
-                    # predict sample
-                    model_gt = latents
-                elif noise_scheduler.prediction_type == DDPMPredictionType.V_PREDICTION:
-                    # predict velocity
-                    model_gt = latents - noise
-                else:
-                    raise ValueError(
-                        "noise scheduler prediction type has to be chosen from ",
-                        f"[{DDPMPredictionType.EPSILON},{DDPMPredictionType.SAMPLE},{DDPMPredictionType.V_PREDICTION}]",
-                    )
+                _, fake_latent = noise_scheduler.step(model_output, timesteps.float().view(-1, 1, 1, 1, 1), noisy_latent)
+                pred_fake = discriminator_model(fake_latent.detach())[-1].view(-1)
+
+            label.fill_(fake_label)
+            loss_fake = criterion(pred_fake.float(), label)
+            loss_fake.backward()
+
+            loss_discriminator = loss_real + loss_fake
+            optimizer_discriminator.step()
+
+
+            ############################
+            # (2) Update G network: maximize log(D(G(z)))
+            ###########################
+
+            optimizer.zero_grad(set_to_none=True)
+
+            label.fill_(real_label)
+            pred_fake_g = discriminator_model(fake_latent)[-1].view(-1)
+            loss_adv = criterion(pred_fake_g.float(), label)
+
+            loss_adv.backward()
+
+
+
+
+            # Noise prediction loss
+            if noise_scheduler.prediction_type == DDPMPredictionType.EPSILON:
+                # predict noise
+                model_gt = noise
+            elif noise_scheduler.prediction_type == DDPMPredictionType.SAMPLE:
+                # predict sample
+                model_gt = latents
+            elif noise_scheduler.prediction_type == DDPMPredictionType.V_PREDICTION:
+                # predict velocity
+                model_gt = latents - noise
+            else:
+                raise ValueError(
+                    "noise scheduler prediction type has to be chosen from ",
+                    f"[{DDPMPredictionType.EPSILON},{DDPMPredictionType.SAMPLE},{DDPMPredictionType.V_PREDICTION}]",
+                )
+
 
             loss_noise = loss_pt(model_output.float(), model_gt.float())   # Dividir para escalar la pérdida
-            loss = loss_noise / args_train.gradient_accumulation_steps  # Dividir la pérdida por los pasos de acumulación de gradientes
+            loss_noise.backward()
 
-            # Acumulación de gradientes
+            optimizer.step()
+
+
+
+
+
+            loss_noise = loss_pt(model_output.float(), model_gt.float())   # Dividir para escalar la pérdida
+            # loss = loss_noise / args_train.gradient_accumulation_steps  # Dividir la pérdida por los pasos de acumulación de gradientes
+            # ============================================================
+            # ADVERSARIAL TRAINING
+            # ============================================================
+            
+            loss_adv = torch.tensor(0.0, device=device)
+            loss_fm = torch.tensor(0.0, device=device)
+            loss_discriminator = torch.tensor(0.0, device=device)
+            
+            
+
+
+            # use_adv = (timesteps.float() / noise_scheduler.num_train_timesteps < 0.2).any()
+            use_adv = True
+            t_norm = timesteps.float() / noise_scheduler.num_train_timesteps    
+            weight_adv = torch.exp(-5 * t_norm)
+            
+            if use_adv:
+
+                _, pred_latent = noise_scheduler.step(model_output, timesteps.float().view(-1, 1, 1, 1, 1), noisy_latent)
+                # ========================================================
+                # DISCRIMINATOR UPDATE
+                # ========================================================
+                with autocast("cuda", enabled=args_train.amp):
+                    real_latent = latents.detach()
+                    fake_latent = pred_latent.detach()
+
+                    # discriminator forward
+                    pred_real = discriminator_model(real_latent)[-1]
+                    pred_fake = discriminator_model(fake_latent)[-1]
+
+                loss_real = torch.relu(1.0 - pred_real.float())
+                loss_fake = torch.relu(1.0 + pred_fake.float())
+
+                weight_adv = weight_adv.view(-1, 1, 1, 1, 1)  # reshape weight_adv to match the shape of loss_real and loss_fake
+                loss_discriminator = (weight_adv * (loss_real + loss_fake)).sum() / (weight_adv.sum() + 1e-8)
+
+                # IMPORTANT:
+                # divide discriminator loss for gradient accumulation
+                loss_discriminator = loss_discriminator / args_train.gradient_accumulation_steps
+                    
+                # backward discriminator
+                if args_train.amp:
+                    scaler.scale(loss_discriminator).backward()
+                else:
+                    loss_discriminator.backward()
+                    
+
+                # ========================================================
+                # GENERATOR ADVERSARIAL LOSSES
+                # ========================================================
+                with autocast("cuda", enabled=args_train.amp):
+                    # IMPORTANT:
+                    # no detach here because generator needs gradients                
+                    fake_outputs_g = discriminator_model(pred_latent)
+                    
+                    # real_outputs_g = discriminator_model(latents)
+
+                pred_fake_g = fake_outputs_g[-1].float()
+
+                # generator adversarial loss
+                loss_adv = (weight_adv * -pred_fake_g).sum() / (weight_adv.sum() + 1e-8)
+
+                # final generator loss
+                loss_generator = (
+                    loss_noise
+                    + args_train.loss_weights.adv * loss_adv
+                    # + args_train.loss_weights.fm * loss_fm
+                )
+            # ============================================================
+            # END OF ADVERSARIAL TRAINING
+            # ============================================================
+            
+            # ============================================================
+            # GENERATOR GRADIENT ACCUMULATION
+            # ============================================================
+                
+            loss_generator = (loss_generator / args_train.gradient_accumulation_steps)
+
             if args_train.amp:
-                scaler.scale(loss).backward()
+                scaler.scale(loss_generator).backward()
             else:
-                loss.backward()
+                loss_generator.backward()
 
             gradient_accumulation_count += 1  # Contador de pasos acumulados
 
-            # Solo se actualizan los pesos cada `gradient_accumulation_steps` pasos
+
+
+
+            # ============================================================
+            # OPTIMIZER STEP
+            # ============================================================
             if gradient_accumulation_count % args_train.gradient_accumulation_steps == 0:
-                # Gradient clipping
+
+
                 if args_train.amp:
+                    # --------------------------------------------------------
+                    # unscale before clipping
+                    # --------------------------------------------------------
                     scaler.unscale_(optimizer)  # Desescalar antes de clipping
-                    scaler.unscale_(optimizer_segmentation_encoder)
+                    # scaler.unscale_(optimizer_segmentation_encoder)
+                    if use_adv:
+                        scaler.unscale_(optimizer_discriminator)
+                        
+                    # --------------------------------------------------------
+                    # gradient clipping
+                    # --------------------------------------------------------
                     torch.nn.utils.clip_grad_norm_(
-                        list(unet.parameters()) + list(segmentation_encoder_model.parameters()) + list(modality_encoder_model.parameters()) + list(resolution_encoder_model.parameters()),
+                        list(unet.parameters()) + 
+                        # list(segmentation_encoder_model.parameters()) + 
+                        list(modality_encoder_model.parameters()) + 
+                        list(resolution_encoder_model.parameters()), # shound we also clip the discriminator parameters?
                         max_norm=1.0
                     )
                            
+                           
+                # --------------------------------------------------------
+                # generator optimizer step
+                # --------------------------------------------------------
                 if args_train.amp:
                     scaler.step(optimizer)
-                    scaler.step(optimizer_segmentation_encoder)
+                    # scaler.step(optimizer_segmentation_encoder)
+                    if use_adv:
+                        scaler.step(optimizer_discriminator)
+                    
                     scaler.update()
                 else:
                     optimizer.step()
-                    optimizer_segmentation_encoder.step()
+                    # optimizer_segmentation_encoder.step()
+                    
+                    if use_adv:
+                        optimizer_discriminator.step()
+
+
+                # --------------------------------------------------------
+                # zero grad
+                # --------------------------------------------------------
                 optimizer.zero_grad(set_to_none=True)
-                optimizer_segmentation_encoder.zero_grad(set_to_none=True)
+                # optimizer_segmentation_encoder.zero_grad(set_to_none=True)
                 
+                if use_adv:
+                    optimizer_discriminator.zero_grad(set_to_none=True)
+                    
                 # update ema
                 if args_train.use_ema:
                     ema.update(step=global_step)
 
                 if lr_scheduler is not None:
                     lr_scheduler.step()
-                if lr_scheduler_segmentation_encoder is not None:
-                    lr_scheduler_segmentation_encoder.step()
+                # if lr_scheduler_segmentation_encoder is not None:
+                #     lr_scheduler_segmentation_encoder.step()
+                if use_adv and lr_scheduler_discriminator is not None:
+                    lr_scheduler_discriminator.step()
 
                 gradient_accumulation_count = 0  # Reiniciar el contador
 
                 # update writter 
                 if global_step % 10 == 0:
-                    writer.add_scalar("Loss/train", loss.item(), global_step)
+                    writer.add_scalar("Loss/train", loss_generator.item(), global_step)
+                    writer.add_scalar("Loss_noise/train", loss_noise.item(), global_step)
+                    writer.add_scalar("Loss_adv/train", loss_adv.item(), global_step)
                     writer.add_scalar("Learning_rate", optimizer.param_groups[0]["lr"], global_step)
                     writer.add_scalar("Time_steps", timesteps[0], global_step)
 
                 # update progress bar 
                 progress_bar.update(1)
 
-                logs = {"0loss": loss.detach().item(), 
-                        "1mod": [modality for modality in batch["modality"]],
-                        "1id": [f'{__id[:4]}' for __id in batch["subject_id"]], 
+                logs = {"0loss": loss_generator.detach().item(), 
+                        "1loss_noise": loss_noise.detach().item(),
+                        "2loss_adv": loss_adv.detach().item(),
+                        "3mod": [modality for modality in batch["modality"]],
+                        "4id": [f'{__id[:4]}' for __id in batch["subject_id"]], 
                         # **logs_conditions,
                         }
                 
@@ -1101,13 +1363,16 @@ def train(
                 # save the model in intervals
                 if global_step % args_train.save_checkpoint_interval == 0:
                     save_model(unet=unet, 
-                               segmentation_encoder_model=segmentation_encoder_model, 
+                            #    segmentation_encoder_model=segmentation_encoder_model, 
                                modality_encoder_model=modality_encoder_model, 
                                resolution_encoder_model=resolution_encoder_model, 
+                                discriminator_model=discriminator_model,
                                optimizer=optimizer,
-                                optimizer_segmentation_encoder=optimizer_segmentation_encoder, 
+                                # optimizer_segmentation_encoder=optimizer_segmentation_encoder, 
+                                optimizer_discriminator=optimizer_discriminator,
                                lr_scheduler=lr_scheduler, 
-                                lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
+                                # lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
+                                lr_scheduler_discriminator=lr_scheduler_discriminator,
                                global_step=global_step, 
                                out_model_path=_checkpoint_dir_name, 
                                ema=ema)
@@ -1115,7 +1380,7 @@ def train(
                 # Generar imágenes en intervalos
                 if args_train.initial_val or global_step % args_train.val_interval == 0:
                     unet.eval()
-                    segmentation_encoder_model.eval()
+                    # segmentation_encoder_model.eval()
                     modality_encoder_model.eval()
                     resolution_encoder_model.eval()
 
@@ -1127,7 +1392,7 @@ def train(
                             ema.apply_shadow()
                         validation(unet=unet, 
                                    noise_scheduler=noise_scheduler, 
-                                   segmentation_encoder_model=segmentation_encoder_model, 
+                                #    segmentation_encoder_model=segmentation_encoder_model, 
                                       modality_encoder_model=modality_encoder_model,
                                       resolution_encoder_model=resolution_encoder_model,
                                    autoencoder=autoencoder, 
@@ -1142,7 +1407,7 @@ def train(
                             
                     args_train.initial_val = False
                     unet.train()
-                    segmentation_encoder_model.train()
+                    # segmentation_encoder_model.train()
                     modality_encoder_model.train()
                     resolution_encoder_model.train()
                     # conditions_model.train()
@@ -1158,13 +1423,16 @@ def train(
 
     # # make  out_model_path dir if it does not exist
     save_model(unet=unet, 
-                segmentation_encoder_model=segmentation_encoder_model, 
+            #    segmentation_encoder_model=segmentation_encoder_model, 
                 modality_encoder_model=modality_encoder_model, 
                 resolution_encoder_model=resolution_encoder_model, 
+                discriminator_model=discriminator_model,
                 optimizer=optimizer,
-                optimizer_segmentation_encoder=optimizer_segmentation_encoder, 
+                # optimizer_segmentation_encoder=optimizer_segmentation_encoder, 
+                optimizer_discriminator=optimizer_discriminator,
                 lr_scheduler=lr_scheduler, 
-                lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
+                # lr_scheduler_segmentation_encoder=lr_scheduler_segmentation_encoder,
+                lr_scheduler_discriminator=lr_scheduler_discriminator,
                 global_step=global_step, 
                 out_model_path=_checkpoint_dir_name, 
                 ema=ema)
@@ -1177,7 +1445,7 @@ def train(
 
 args_train = {
     # directories 
-    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test2",
+    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test3_merged8_4res",
     "checkpoints_dir_name": "check_points",
     "logs_dir_name": "logs",
     "val_imgs_dir_name": "val_imgs",
@@ -1193,18 +1461,19 @@ args_train = {
     "amp": True,
 
     # ---- Training stability
-    "batch_size": 6, #6 
-    "gradient_accumulation_steps": 2,#2,
+    "batch_size": 6, #3 
+    "gradient_accumulation_steps": 1,
     "use_ema": True,
     "ema_params": {
         "decay": 0.999,
-        "warm_up_steps": 2000,
-        "warm_up_decay": 0.5,
+        "warm_up_steps": 50000,
+        "warm_up_decay": 0.3,
     },
+
 
     # ---- optimizer
     "lr":  1e-4, # for maisi 1e-3 for maisi 1e-4 # for blsmd 2.5e-5
-    "segmentation_encoder_lr": 5e-5, # 1e-4 for maisi, 1e-5 for blsmd
+    # "segmentation_encoder_lr": 5e-5, # 1e-4 for maisi, 1e-5 for blsmd
     # "lr":  1e-3, # for maisi 1e-3 for maisi 1e-4 # for blsmd 2.5e-5
     # "lr":  2.5e-5, # for maisi 1e-3 for maisi 1e-4 # for blsmd 2.5e-5
 
@@ -1212,8 +1481,8 @@ args_train = {
     # "lr_scheduler": None,
     # "lr_scheduler": {"name": "PolynomialLR", "power": 2.0},
     # "lr_scheduler": {"name": "CosineAnnealingLR", "eta_min": 1e-6},
-    "lr_scheduler": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-2, "warmup_steps": 500, "eta_min": 1e-6},
-    "lr_scheduler_segmentation_encoder": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-4, "warmup_steps": 500, "eta_min": 1e-6},
+    "lr_scheduler": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-2, "warmup_steps": 2000, "eta_min": 1e-5},
+    # "lr_scheduler_segmentation_encoder": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-4, "warmup_steps": 500, "eta_min": 1e-6},
     # "lr_scheduler": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-2, "warmup_steps": 25, "eta_min": 1e-6},
 
 
@@ -1224,28 +1493,34 @@ args_train = {
 
 
     # ---- resume from checkpoint
-    "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_70000.pt",
-    # "resume_from_checkpoint_path_name": None, # not working
+    # "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_70000.pt",
+    "resume_from_checkpoint_path_name": None, # not working
 
     # reproducibility
     "seed": 42,
 
     # validation
     "val_interval": 1000,
-    "initial_val": True, # remember drop out
+    "initial_val": False, # remember drop out
     # "validation_first": True, # if True, the model will be validated before the first training step, if False, the model will be validated after the first training step
     "val_seeds": [0],#[0,12357], # seeds for the noise generation during validation
     "max_val_subjects": None, # max number of subjects to be generated during validation, set to None to use all the subjects in the val dataloader
     "val_dataset_filters": {
-        'iid': ["SP_T1W_3T_0006", "SP_T1W_5T_0006", "SP_T1W_7T_0006", 
-                       "SP_T2W_3T_0006", "SP_T2W_5T_0006", "SP_T2W_7T_0006",
-                       "SP_T2FLAIR_3T_0006", "SP_T2FLAIR_5T_0006", "SP_T2FLAIR_7T_0006",]
+        'sid': ['S0006']  # Example filter for a specific subject ID
+        # 'iid': [
+        #     "SP_T1W_0.1T_0006", "SP_T1W_0.1T_0006", "SP_T1W_7T_0006", 
+        #     "SP_T1W_3T_0006", "SP_T1W_5T_0006", "SP_T1W_7T_0006", 
+        #     "SP_T1W_3T_0006", "SP_T1W_5T_0006", "SP_T1W_7T_0006", 
+        #                "SP_T2W_3T_0006", "SP_T2W_5T_0006", "SP_T2W_7T_0006",
+        #                "SP_T2FLAIR_3T_0006", "SP_T2FLAIR_5T_0006", "SP_T2FLAIR_7T_0006",]
     },
     # specialied synthesis
     # "specialized_index": 1, # None for random, 0 for t1n, 1 for t1c, 2 for t2w, 3 for t2f
     
     "used_modalities": ["T1W", "T2W", "T2FLAIR"], # "T1W", "T2W", "T2FLAIR"
-    "used_resolutions": [3, 5, 7], #0.1, 1.5, 3, 5, 7
+    # "used_resolutions": [1.5, 3, 5, 7], #0.1, 1.5, 3, 5, 7
+    "used_resolutions": [1.5, 3, 5, 7], #0.1, 1.5, 3, 5, 7
+    # "used_resolutions": [3, 5, 7], #0.1, 1.5, 3, 5, 7
 
     # "identity_allowed": True, # if True, the model can learn the identity function, if False, the model has to learn the conversion
 
@@ -1258,6 +1533,7 @@ args_train = {
 
     "noise_scheduler_type": "rflow", # "ddpm" or "rflow"
     "latents_shape": None, # filled automatically based on the dataset
+    "nb_seg_classes": 8, # number of segmentation classes including the background, used for the one hot encoding of the segmentation maps
 }
 
 
@@ -1267,79 +1543,3 @@ train(
     device,
 )
 
-
-# I am training a diffusion model to generate brain MRI images. I have two condition embedding to be optimized that refer to the modality_embedding (T1w, T2w, falir), and the resolution embedding (3 tesla, 5 tesla, 7 tesla). I want to add the following two losses.
-# Let's supose that I have two subjects in the batch s1 y s2
-
-# 1. 
-
-# import torch
-# import torch.nn.functional as F
-
-# def modality_prototype_losses(embeddings, modality_ids, margin=0.2):
-#     """
-#     Returns:
-#         intra_loss: compactness within modality
-#         inter_loss: separation between modality prototypes
-#     """
-
-#     embeddings = F.normalize(embeddings, dim=1)
-
-#     prototypes = []
-#     proto_labels = []
-
-#     intra_loss = 0.0
-#     valid_modalities = 0
-
-#     unique_modalities = modality_ids.unique()
-
-#     # -------------------------
-#     # 1. Compute prototypes ONCE
-#     # -------------------------
-#     for m in unique_modalities:
-#         mask = modality_ids == m
-#         if mask.sum() == 0:
-#             continue
-
-#         proto = embeddings[mask].mean(dim=0)
-#         proto = F.normalize(proto, dim=0)
-
-#         prototypes.append(proto)
-#         proto_labels.append(m)
-
-#         # -------------------------
-#         # 2. Intra-class loss
-#         # -------------------------
-#         sim = (embeddings[mask] * proto).sum(dim=1)  # cosine similarity
-#         intra_loss += (1 - sim).mean()
-
-#         valid_modalities += 1
-
-#     if valid_modalities == 0:
-#         zero = torch.tensor(0.0, device=embeddings.device)
-#         return zero, zero
-
-#     intra_loss = intra_loss / valid_modalities
-
-#     # -------------------------
-#     # 3. Inter-class separation
-#     # -------------------------
-#     if len(prototypes) < 2:
-#         inter_loss = torch.tensor(0.0, device=embeddings.device)
-#     else:
-#         prototypes = torch.stack(prototypes)  # (M, D)
-
-#         sim_matrix = prototypes @ prototypes.T  # cosine similarity
-
-#         inter_loss = 0.0
-#         count = 0
-
-#         M = sim_matrix.size(0)
-#         for i in range(M):
-#             for j in range(i + 1, M):
-#                 inter_loss += F.relu(sim_matrix[i, j] - margin)
-#                 count += 1
-
-#         inter_loss = inter_loss / max(count, 1)
-
-#     return intra_loss, inter_loss
