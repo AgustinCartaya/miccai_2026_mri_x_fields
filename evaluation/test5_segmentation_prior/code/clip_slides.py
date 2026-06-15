@@ -15,7 +15,10 @@ def process_file(src_file: Path, src_root: Path, dst_root: Path,
 
     rel_path = src_file.relative_to(src_root)
     dst_file = dst_root / rel_path
-
+    # verify if file already exists
+    if dst_file.exists():
+        print(f"Skipping existing file: {dst_file}")
+        return str(dst_file)
     dst_file.parent.mkdir(parents=True, exist_ok=True)
 
     img, aff = nfc.load_nifti(str(src_file))
@@ -63,13 +66,10 @@ def crop_z_slices(src_root: Path,
 
 
 if __name__ == "__main__":
-    src_root = Path(
-        "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/controlnet/chk_210000_cnchk_95000/task1"
-    )
-
-    dst_root = Path(
-        "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/controlnet/chk_210000_cnchk_95000/task1_zclipped"
-    )
+    input_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/val_ema/basic/merged_8/chk_145000_steps_30/task3"
+    output_path = input_path + "_zclipped"
+    src_root = Path(input_path)
+    dst_root = Path(output_path)
 
     crop_z_slices(
         src_root=src_root,

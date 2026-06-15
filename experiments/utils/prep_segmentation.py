@@ -11,7 +11,7 @@ import utils.nifti_functions as nfc
 # not robust = 28seg 
 # no robust no cortical_parcelation = 23seg
 
-def save_synthseg_segmentation(img_path_name, out_path_name, verify=False, verbose=False, robust=True, cortical_parcelation=True, path_name_vol_csv=None, path_name_resampled_img=None, path_name_post_prob_img=None, threads=16):
+def save_synthseg_segmentation(img_path_name, out_path_name, verify=False, verbose=False, robust=True, cortical_parcelation=True, path_name_vol_csv=None, path_name_resampled_img=None, path_name_post_prob_img=None, cpu=True, threads=16):
     """Run mri_synthseg to get the segmentation of the input image.
     Args:
         img_path_name (str): Path to the input image.
@@ -52,10 +52,13 @@ def save_synthseg_segmentation(img_path_name, out_path_name, verify=False, verbo
                 "--o", out_path_name, 
                 # "--parc",
                 # "--robust",
-                "--cpu",
-                "--threads", str(threads)
+                # "--cpu",
+                # "--threads", str(threads)
                 ]
     
+    if cpu:
+        command.append("--cpu")
+        command.extend(["--threads", str(threads)])
     if robust:
         command.append("--robust")
     if cortical_parcelation:
@@ -66,6 +69,7 @@ def save_synthseg_segmentation(img_path_name, out_path_name, verify=False, verbo
         command.extend(["--resample", path_name_resampled_img])
     if path_name_post_prob_img is not None:
         command.extend(["--post", path_name_post_prob_img])
+    
 
     # print(command)
     

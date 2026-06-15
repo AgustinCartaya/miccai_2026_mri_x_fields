@@ -58,7 +58,7 @@ sys.path.append('/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/u
 from autoencoder_declaration import AutoencoderPrediction
 
 # device_name = f"cuda:{gpu_selector.get_least_used_gpu()}"
-device_name = f"cuda:0"
+device_name = f"cuda:1"
 device = torch.device(device_name)
 
 
@@ -1404,7 +1404,8 @@ args_train = {
 
     # ---- resume from checkpoint
     # "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test4_merged8_4res_adversarial/check_points/model_20000.pt", # not working
-    "resume_from_checkpoint_path_name": None,
+    "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test4_merged8_4res_adversarial_t1w/check_points/model_25000.pt",
+    
     # reproducibility
     "seed": 42,
 

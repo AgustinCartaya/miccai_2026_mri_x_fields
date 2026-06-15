@@ -181,8 +181,5 @@ if __name__ == "__main__":
     }
 
 
-    # preprocess_supersynth(split="pr_train", unique_modality=None, unique_resolution=None, merge_seg_3=True, segmentation_algorithm="supersynth")
-    # preprocess_supersynth(split="train", unique_modality=None, unique_resolution=None, merge_seg_3=True, segmentation_algorithm="supersynth")
-    # preprocess_supersynth(split="val", unique_modality=None, unique_resolution=None, merge_seg_3=True, segmentation_algorithm="supersynth")
 
-    preprocess_supersynth(split="train", unique_modality=None, unique_resolution=None, merge_dict=mapping_dict_8, merge_name="merged_8", segmentation_algorithm="supersynth")
+    preprocess_supersynth(split="val", unique_modality=None, unique_resolution=None, merge_dict=mapping_dict_8, merge_name="merged_8", segmentation_algorithm="supersynth")

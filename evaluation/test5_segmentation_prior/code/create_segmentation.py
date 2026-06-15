@@ -1,66 +1,62 @@
-import argparse
-import json
+
 import os
-import tempfile
-import numpy as np
-import subprocess
 from tqdm import tqdm
 import pandas as pd
-import datetime
-import time
-import gc
-import random
 import sys
-import shutil
 import glob
 
 
-sys.path.append('/home/agustin/phd/synthesis')
 sys.path.append('/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/utils')
 
-# pytorch
-import torch
-from torch.amp import GradScaler, autocast
-from torch.utils.tensorboard import SummaryWriter
-from torch.utils.checkpoint import checkpoint
-from torch.utils.data import Dataset, Sampler
-import torch.distributed as dist
-import torch.nn.functional as F
-
-# data loader
-from sklearn.preprocessing import MinMaxScaler
-
-# mine
-import utils.nifti_functions as nfc
-import utils.util as util
-import utils.functions as fc
-import utils.util_freesurfer_segmentation as ufs
-import utils.gpu_selector as gpu_selector
-import data_loaders.load_dataset as load_dataset
-import utils.data_normalization as data_normalization
-
-import prep_image as prep_image
-import prep_segmentation as prep_segmentation
-import prep_vol2vol as prep_vol2vol 
-
-# monai
-from monai.bundle import ConfigParser
-from monai.networks.utils import copy_model_state
-
-import  networks_declaration.diffusion_model_unet_maisi_mask_seg as diffusion_model_unet_maisi
-import  networks_declaration.conditions_model as conditions_model
-import  networks_declaration.controlnet_maisi as controlnet_maisi
+import perp_segmentation_and_resampling as perp_segmentation_and_resampling
 
 
-from networks_declaration.rectified_flow import RFlowScheduler
-from monai.networks.schedulers.ddpm import DDPMPredictionType
-# images
-from PIL import Image
+# def segment_and_resample(pred_img_path, save_path_name, verify=True, algorithm="synthseg"):
+    
+#     if verify and os.path.exists(save_path_name):
+#         return
 
-sys.path.append('/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/utils')
-from autoencoder_declaration import AutoencoderPrediction
+#     non_resampled_path_name = save_path_name.replace(".nii.gz", "_non_resampled.nii.gz")
 
+#     if algorithm == "synthseg":
+#         prep_segmentation.save_synthseg_segmentation(
+#             pred_img_path,
+#             non_resampled_path_name,
+#             verify=verify,
+#             verbose=False,
+#             cortical_parcelation=False
+#         )
+#     elif algorithm == "supersynth":
+#         supersynth_seg_path = non_resampled_path_name.replace(".nii.gz", "_supersynth")
+#         prep_supersynth.save_supersynth(
+#             pred_img_path,
+#             supersynth_seg_path,
+#             verify=verify,
+#             verbose=False,
+#             convert_to_nifti=True,
+#             remove_mgz=True,
+#             keep_only_segmentation=True
+#         )
+#         # copy the file called segmentation.nii.gz created by save_supersynth to its parent folder with the name non_resampled_path_name
+#         shutil.copyfile(os.path.join(supersynth_seg_path, "segmentation.nii.gz"), non_resampled_path_name)
+#         # remove the supersynth_seg_path folder
+#         shutil.rmtree(supersynth_seg_path)
+        
+#     # resampled_path_name = save_path_name.replace(".nii.gz", "_seg.nii.gz")
+#     prep_vol2vol.apply_vol2vol(
+#         pred_img_path,
+#         non_resampled_path_name,
+#         save_path_name,
+#         verify=verify,
+#         verbose=False,
+#         nearest=True
+#     )
 
+#     # remove the intermediate segmentation file
+#     try:
+#         os.remove(non_resampled_path_name)
+#     except Exception as e:            
+#         pass
 
 
 def create_df_task1(pred_path_name, modalitites, resolutions):
@@ -71,7 +67,7 @@ def create_df_task1(pred_path_name, modalitites, resolutions):
             pred_files = glob.glob(os.path.join(pred_path, "*.nii.gz"))
             for pred_file in pred_files:
                 iid = os.path.basename(pred_file).replace(".nii.gz", "")
-                sid = iid.split("_")[-1]
+                sid = "S" + iid.split("_")[-1]
                 # org_img_path = pred_file.replace("pred", "org").replace(f"{resolution}T_to_7T", f"{resolution}T")
                 # latent_seg_supersynth_path = org_img_path.replace("org", "latent_seg_supersynth").replace(".nii.gz", ".npy")
                 data.append({
@@ -80,19 +76,20 @@ def create_df_task1(pred_path_name, modalitites, resolutions):
                     "modality": modality,
                     "resolution": resolution,
                     "pred_img_path": pred_file,
+                    
                 })
     df = pd.DataFrame(data)
     return df
 
 
 
-def segment_task1(pred_path_name):
+def segment_task1(pred_path_name, segment_supersynth=False):
     pred_path_name = os.path.join(pred_path_name, "task1")
 
     modalitites = ["T1W", "T2W", "T2FLAIR"]
     resolutions = [0.1, 1.5, 3, 5]
 
-    df_val_task1 = create_df(pred_path_name, modalitites, resolutions)
+    df_val_task1 = create_df_task1(pred_path_name, modalitites, resolutions)
 
     bar = tqdm(df_val_task1.iterrows(), total=len(df_val_task1), desc="Segmenting Task 1")
     # filter 
@@ -112,33 +109,16 @@ def segment_task1(pred_path_name):
         bar.set_description(f"Segmenting Task 1 - sid: {row['sid']} Modality {modality} = Resolution {resolution}T")
 
 
-        if os.path.exists(save_path_name):
-            bar.update(1)  
-            continue
+        # if os.path.exists(save_path_name):
+        #     bar.update(1)  
+        #     continue
 
-        non_resampled_path_name = save_path_name.replace(".nii.gz", "_non_resampled.nii.gz")
-        prep_segmentation.save_synthseg_segmentation(
-            pred_img_path,
-            non_resampled_path_name,
-            verify=True,
-            verbose=False,
-            cortical_parcelation=False
-        )
-        # resampled_path_name = save_path_name.replace(".nii.gz", "_seg.nii.gz")
-        prep_vol2vol.apply_vol2vol(
-            pred_img_path,
-            non_resampled_path_name,
-            save_path_name,
-            verify=True,
-            verbose=False,
-            nearest=True
-        )
-
-        # remove the intermediate segmentation file
-        try:
-            os.remove(non_resampled_path_name)
-        except Exception as e:            
-            pass
+        perp_segmentation_and_resampling.segment_and_resample(pred_img_path, save_path_name)
+        
+        if segment_supersynth:
+            # also create the segmentation using supersynth and save it in the same folder with the name save_name.replace("_seg.nii.gz", "_seg_supersynth.nii.gz")
+            supersynth_save_path_name = save_path_name.replace("_seg.nii.gz", "_seg_supersynth.nii.gz")
+            perp_segmentation_and_resampling.segment_and_resample(pred_img_path, supersynth_save_path_name, algorithm="supersynth")
     
         bar.update(1)  
 
@@ -173,11 +153,13 @@ def create_df_task2(pred_path_name, modalitites, resolutions):
 
 
 
-def segment_task2(pred_path_name):
+
+    
+def segment_task2(pred_path_name, segment_supersynth=False):
     pred_path_name = os.path.join(pred_path_name, "task2")
 
     modalitites = ["T1W", "T2W", "T2FLAIR"]
-    resolutions = [3, 5, 7]
+    resolutions = [1.5, 3, 5, 7]
 
     df_val_task2 = create_df_task2(pred_path_name, modalitites, resolutions)
 
@@ -198,22 +180,96 @@ def segment_task2(pred_path_name):
 
         bar.set_description(f"Segmenting Task 2 - sid: {row['sid']} Modality {modality} = Resolution {resolution}T")
 
+        perp_segmentation_and_resampling.segment_and_resample(pred_img_path, save_path_name)
+        
+        if segment_supersynth:
+            # also create the segmentation using supersynth and save it in the same folder with the name save_name.replace("_seg.nii.gz", "_seg_supersynth.nii.gz")
+            supersynth_save_path_name = save_path_name.replace("_seg.nii.gz", "_seg_supersynth.nii.gz")
+            perp_segmentation_and_resampling.segment_and_resample(pred_img_path, supersynth_save_path_name, algorithm="supersynth")
 
+        bar.update(1)  
+
+    bar.close()
+    
+
+
+def segment_task2_test(pred_path_name):
+    pred_path_name = os.path.join(pred_path_name, "task2")
+
+    modalitites = ["T1W", "T2W", "T2FLAIR"]
+    # resolutions = [1.5, 3, 5, 7]
+    resolutions = [3, 5, 7]
+
+    df_val_task2 = create_df_task2(pred_path_name, modalitites, resolutions)
+
+    # filter 
+    def create_input_output_txt(temp_path):
+        input_list = []
+        output_list = []
+        for i, row in df_val_task2.iterrows():    
+
+            modality = row["modality"]
+            resolution = row["resolution"]
+            iid = row["iid"]
+            pred_img_path = row["pred_img_path"]
+
+            if resolution not in [0.1, 1.5]:
+                resolution = int(resolution)
+            save_path = os.path.join(pred_path_name, modality, f"0.1T_to_{resolution}T", "seg")
+            save_name = iid.replace(f"0.1T", f"{resolution}T") + "_seg_non_resampled" + ".nii.gz"
+            save_path_name = os.path.join(save_path, save_name)
+            
+            input_list.append(pred_img_path)
+            output_list.append(save_path_name)
+        
+        # save lists as txt files
+        input_path = os.path.join(temp_path, "input_list.txt")
+        output_path = os.path.join(temp_path, "output_list.txt")
+        with open(input_path, "w") as f:
+            for item in input_list:
+                f.write("%s\n" % item)
+        with open(output_path, "w") as f:
+            for item in output_list:
+                f.write("%s\n" % item)
+        return input_path, output_path
+                
+    ### SEGMENT
+    temp_folder = os.path.join(pred_path_name, "temp")
+    os.makedirs(temp_folder, exist_ok=True)
+    input_path, output_path = create_input_output_txt(temp_folder)
+    
+    prep_segmentation.save_synthseg_segmentation(
+            input_path,
+            output_path,
+            verify=False,
+            verbose=True,
+            cortical_parcelation=False
+    )
+
+
+    ### RESAMPLE
+
+    with open(input_path, "r") as f:
+        input_paths = f.read().splitlines()
+    with open(output_path, "r") as f:
+        output_paths = f.read().splitlines()   
+
+            
+    bar = tqdm(df_val_task2.iterrows(), total=len(df_val_task2), desc="Segmenting Task 2")
+    
+    for input_path, non_resampled_path_name in zip(input_paths, output_paths):
+        # bar.set_description(f"Segmenting Task 2 - sid: {row['sid']} Modality {modality} = Resolution {resolution}T")
+
+        save_path_name = non_resampled_path_name.replace("_seg_non_resampled.nii.gz", "_seg.nii.gz")
         if os.path.exists(save_path_name):
             bar.update(1)  
             continue
 
         non_resampled_path_name = save_path_name.replace(".nii.gz", "_non_resampled.nii.gz")
-        prep_segmentation.save_synthseg_segmentation(
-            pred_img_path,
-            non_resampled_path_name,
-            verify=True,
-            verbose=False,
-            cortical_parcelation=False
-        )
+
         # resampled_path_name = save_path_name.replace(".nii.gz", "_seg.nii.gz")
         prep_vol2vol.apply_vol2vol(
-            pred_img_path,
+            input_path,
             non_resampled_path_name,
             save_path_name,
             verify=True,
@@ -228,34 +284,43 @@ def segment_task2(pred_path_name):
             pass
     
         bar.update(1)  
-
+    # reemove temp folder
+    try:
+        # shutil.rmtree(temp_folder)
+        print("removing temp folder")
+    except Exception as e:
+        pass
     bar.close()
     
 
 
-
 if __name__ == "__main__":
-    # output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results"
-    output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results"
+    # output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/val"
+    output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/train"
 
     use_controlnet = False
     n_inference_steps = 30
 
-    used_chk = 200000
-    # used_chk = 210000
-    # controlnet_chk = 95000
+    dm_chk_number = 145000
+    dm_seg_channels = 8
+    used_mask = f"merged_{dm_seg_channels}"
 
-    network_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test1/check_points/model_{used_chk}.pt"
-
+    # dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test1/check_points/model_{dm_chk_number}.pt"
+    dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test3_merged8_4res/check_points/model_{dm_chk_number}.pt"
+    # dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test3_merged8_4res_probseg/check_points/model_{dm_chk_number}.pt"
+ 
     if not use_controlnet:
-        output_path = os.path.join(output_path, f"basic", f"chk_{used_chk}_steps_{n_inference_steps}")
+        output_path = os.path.join(output_path, f"basic", used_mask, f"chk_{dm_chk_number}_steps_{n_inference_steps}")
     else:
-        controlnet_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_controlnet2/check_points/model_{controlnet_chk}.pt"
-        output_path = os.path.join(output_path, f"controlnet", f"chk_{used_chk}_cnchk_{controlnet_chk}_steps_{n_inference_steps}")
+        # dm_chk_number = 210000
+        cnet_chk_number = 100000
+        controlnet_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_controlnet/test1/check_points/model_{cnet_chk_number}.pt"
+        output_path = os.path.join(output_path, f"controlnet", f"chk_{dm_chk_number}_cnchk_{cnet_chk_number}_steps_{n_inference_steps}")
         # raise NotImplementedError("ControlNet is not implemented yet for the evaluation, but it will be in the future. For now, just set use_controlnet to False if you want to run the evaluation.")
 
-    # segment_task1(output_path)
-    segment_task2(output_path)
+    segment_task1(output_path, segment_supersynth=True)
+    # segment_task2(output_path, segment_supersynth=True)
+    # segment_task2_test(output_path)
 
 
 
