@@ -5,25 +5,25 @@ import prep_supersynth as prep_supersynth
 import prep_vol2vol as prep_vol2vol 
 
 
-def segment_and_resample(pred_img_path, save_path_name, verify=True, algorithm="synthseg"):
+def segment_and_resample(img_path, output_path_name, verify=True, algorithm="synthseg", cortical_parcelation=False):
     
-    if verify and os.path.exists(save_path_name):
+    if verify and os.path.exists(output_path_name):
         return
 
-    non_resampled_path_name = save_path_name.replace(".nii.gz", "_non_resampled.nii.gz")
+    non_resampled_path_name = output_path_name.replace(".nii.gz", "_non_resampled.nii.gz")
 
     if algorithm == "synthseg":
         prep_segmentation.save_synthseg_segmentation(
-            pred_img_path,
+            img_path,
             non_resampled_path_name,
             verify=verify,
             verbose=False,
-            cortical_parcelation=False
+            cortical_parcelation=cortical_parcelation
         )
     elif algorithm == "supersynth":
         supersynth_seg_path = non_resampled_path_name.replace(".nii.gz", "_supersynth")
         prep_supersynth.save_supersynth(
-            pred_img_path,
+            img_path,
             supersynth_seg_path,
             verify=verify,
             verbose=False,
@@ -36,11 +36,11 @@ def segment_and_resample(pred_img_path, save_path_name, verify=True, algorithm="
         # remove the supersynth_seg_path folder
         shutil.rmtree(supersynth_seg_path)
         
-    # resampled_path_name = save_path_name.replace(".nii.gz", "_seg.nii.gz")
+    # resampled_path_name = output_path_name.replace(".nii.gz", "_seg.nii.gz")
     prep_vol2vol.apply_vol2vol(
-        pred_img_path,
+        img_path,
         non_resampled_path_name,
-        save_path_name,
+        output_path_name,
         verify=verify,
         verbose=False,
         nearest=True

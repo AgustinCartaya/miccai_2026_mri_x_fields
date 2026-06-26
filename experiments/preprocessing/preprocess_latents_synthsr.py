@@ -19,7 +19,7 @@ from autoencoder_declaration import AutoencoderPrediction
 import prep_image as prep_image
 
 
-device_name = f"cuda:3"
+device_name = f"cuda:0"
 device = torch.device(device_name)
 
 

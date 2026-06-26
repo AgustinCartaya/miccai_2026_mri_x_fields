@@ -10,9 +10,10 @@ import sys
 sys.path.append('/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/utils')
 
 
-import prep_segmentation as prep_segmentation
-import prep_vol2vol as prep_vol2vol 
+# import prep_segmentation as prep_segmentation
+# import prep_vol2vol as prep_vol2vol 
 
+import perp_segmentation_and_resampling as perp_segmentation_and_resampling
 
 # def preprocess_supersynth(split="train"):
 #     csv_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/{split}_data.csv"
@@ -81,35 +82,13 @@ import os
 
 def process_row(index, row, base_output_path):
 
-    subject_id = row['subject_id']
+    iid = row['iid']
     resolution = row['resolution']
     modality = row['modality']
-    img_path = row['path']
+    img_path = row['org_img_path']
 
     try:
 
-        # # Reuse T1W segmentation
-        # if modality != "T1W":
-
-        #     output_path = os.path.join(
-        #         base_output_path,
-        #         "T1W",
-        #         f"{resolution}T"
-        #     )
-
-        #     # dirty trick
-        #     subject_id = subject_id.replace(f"_{modality}_", "_T1W_")
-
-        #     output_name = f"{subject_id}_synthseg_resampled.nii.gz"
-
-        #     output_path_name = os.path.join(
-        #         output_path,
-        #         output_name
-        #     )
-
-        #     return index, output_path_name
-
-        # T1W processing
         output_path = os.path.join(
             base_output_path,
             modality,
@@ -118,65 +97,42 @@ def process_row(index, row, base_output_path):
 
         os.makedirs(output_path, exist_ok=True)
 
-        output_name = f"{subject_id}_synthseg.nii.gz"
+        output_name = f"{iid}_synthseg.nii.gz"
 
         output_path_name = os.path.join(
             output_path,
             output_name
         )
 
-        resampled_path_name = output_path_name.replace(
-            ".nii.gz",
-            "_resampled.nii.gz"
-        )
-
         # Run SynthSeg only if needed
-        if not os.path.exists(resampled_path_name):
+        if not os.path.exists(output_path_name):
 
-            prep_segmentation.save_synthseg_segmentation(
+            perp_segmentation_and_resampling.segment_and_resample(
                 img_path,
                 output_path_name,
                 verify=True,
-                verbose=False,
+                algorithm="synthseg",
                 cortical_parcelation=False
             )
 
-            prep_vol2vol.apply_vol2vol(
-                img_path,
-                output_path_name,
-                resampled_path_name,
-                verify=True,
-                verbose=False,
-                nearest=True
-            )
-
-            try:
-                os.remove(output_path_name)
-            except:
-                pass
-
-        return index, resampled_path_name
+        return index, output_path_name
 
     except Exception as e:
 
-        print(f"Failed {subject_id}: {e}")
+        print(f"Failed {iid}: {e}")
 
         return index, None
 
 
 def preprocess_supersynth(split="train", num_workers=4):
 
-    csv_path = (
-        f"/home/agustin/phd/miccai/miccai_2026/"
-        f"mri_x_fields/data/csv/{split}_data.csv"
-    )
+    csv_path = (f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/{split}_data.csv")
 
     df = pd.read_csv(csv_path)
+    # df = df[(df["modality"].isin(["T1W"])) & (df["resolution"].isin([7]))]
+    # df = df[ (df["resolution"].isin([7]))].reset_index(drop=True)
 
-    base_output_path = (
-        f"/home/agustin/phd/miccai/miccai_2026/"
-        f"mri_x_fields/data/{split}_data/preprocessed/synthseg"
-    )
+    base_output_path = (f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/{split}_data/preprocessed/synthseg")
 
     # Preallocate to preserve order
     seg_paths = [None] * len(df)
@@ -206,7 +162,7 @@ def preprocess_supersynth(split="train", num_workers=4):
 
             seg_paths[index] = seg_path
 
-    df["segmentation_path"] = seg_paths
+    df["seg_synthseg_path"] = seg_paths
 
     output_csv_path = (
         f"/home/agustin/phd/miccai/miccai_2026/"
@@ -221,4 +177,4 @@ def preprocess_supersynth(split="train", num_workers=4):
     
 
 if __name__ == "__main__":
-    preprocess_supersynth(split="pr_train")
+    preprocess_supersynth(split="paired_train")

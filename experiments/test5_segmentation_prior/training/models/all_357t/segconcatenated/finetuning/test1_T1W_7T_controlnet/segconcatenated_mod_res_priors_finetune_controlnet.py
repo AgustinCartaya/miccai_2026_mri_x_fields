@@ -93,15 +93,10 @@ def instantiate_unconditioned_models(
         "diffusion_unet_def": {
             "_target_": "monai.apps.generation.maisi.networks.diffusion_model_unet_maisi.DiffusionModelUNetMaisi",
             "spatial_dims": 3,
-            "in_channels": 4
-            + nb_seg_classes,  # 4 for the latent and nb_seg_classes for the segmentation conditioning (concatenated)
+            "in_channels": 4 + nb_seg_classes,  # 4 for the latent and nb_seg_classes for the segmentation conditioning (concatenated)
             "out_channels": 4,
             "num_res_blocks": 2,
             "num_channels": [
-                # 32,
-                # 64,
-                # 128,
-                # 256,
                 64,
                 128,
                 256,

@@ -61,7 +61,7 @@ from autoencoder_declaration import AutoencoderPrediction
 import prep_image as prep_image
 
 # device_name = f"cuda:{gpu_selector.get_least_used_gpu()}"
-device_name = f"cuda:0"
+device_name = f"cuda:1"
 device = torch.device(device_name)
 
 
@@ -314,7 +314,8 @@ class LoadPaths:
         instances = []
         for i, row in complete_df.iterrows():
             instance_dict = {}
-            latent_path = row["latent_normalized_wm_path"]
+            latent_path = row["latent_path"]
+            seg_row = f"latent_seg_supersynth_merged_{self.nb_seg_classes}_path" if f"latent_seg_supersynth_merged_{self.nb_seg_classes}_path" in row else f"latent_seg_synthseg_merged_{self.nb_seg_classes}_path"
             # verify that the latent path exists
             if not os.path.exists(latent_path):
                 # print(f"Latent path {latent_path} does not exist. Skipping this instance.")
@@ -326,9 +327,7 @@ class LoadPaths:
             instance_dict["modality_idx"] = row["modality_idx"]
             instance_dict["resolution"] = row["resolution"]
             instance_dict["resolution_idx"] = row["resolution_idx"]
-            instance_dict["segmentation_npy_path"] = row[
-                f"latent_seg_supersynth_merged_{self.nb_seg_classes}_path"
-            ]
+            instance_dict["segmentation_npy_path"] = row[seg_row]
             instance_dict["org_img_path"] = row["org_img_path"]
             
             instances.append(instance_dict)
@@ -470,7 +469,7 @@ class PrepareDataset(Dataset):
         # max_prob_latent_synthsr = self.latent_synthsr_prob[instance["modality"]][instance["resolution"]]
         load_latent_synthsr = True
         # generate a random number between 0 and 1 using the latent_synthsr_generator
-        if self.latent_synthsr_generator is not None:
+        if self.latent_synthsr_generator is not None and self.latent_synthsr_prob is not None:
             rand_num = torch.rand(1, generator=self.latent_synthsr_generator).item()
             load_latent_synthsr = rand_num < self.latent_synthsr_prob
         if load_latent_synthsr:
@@ -662,7 +661,8 @@ def validation(
         org_img_list.append(org_img)
         
         for seed in args.val_seeds:
-            for use_synthsr in [False, True]:
+            # for use_synthsr in [False, True]:
+            for use_synthsr in [True]:
                 
                 # instantiate every time to generate using the same initial noise (using CPU generator)
                 _l_shape = [1,latents_shape[-4],latents_shape[-3],latents_shape[-2],latents_shape[-1],]
@@ -1014,7 +1014,7 @@ def train(
     gen_t = torch.Generator().manual_seed(args_train.seed)
     gen_noise = torch.Generator().manual_seed(args_train.seed)
     gen_pondered_seg = torch.Generator().manual_seed(args_train.seed)
-    gen_modality = torch.Generator().manual_seed(args_train.seed)
+    gen_free_guidance = torch.Generator().manual_seed(args_train.seed)
     gen_synthsr = torch.Generator().manual_seed(args_train.seed)
 
     models_dict = instantiate_unconditioned_models(
@@ -1065,13 +1065,9 @@ def train(
 
     # ---- create folders
     os.makedirs(args_train.output_path, exist_ok=True)
-    _checkpoint_dir_name = os.path.join(
-        args_train.output_path, args_train.checkpoints_dir_name
-    )
+    _checkpoint_dir_name =  os.path.join(args_train.output_path, args_train.checkpoints_dir_name)
     _logs_dir_name = os.path.join(args_train.output_path, args_train.logs_dir_name)
-    _val_imgs_dir_name = os.path.join(
-        args_train.output_path, args_train.val_imgs_dir_name
-    )
+    _val_imgs_dir_name = os.path.join(args_train.output_path, args_train.val_imgs_dir_name)
     os.makedirs(_checkpoint_dir_name, exist_ok=True)
     os.makedirs(_logs_dir_name, exist_ok=True)
     os.makedirs(_val_imgs_dir_name, exist_ok=True)
@@ -1100,14 +1096,6 @@ def train(
         weight_decay=0.01,
     )
 
-    # optimizer_segmentation_encoder = torch.optim.AdamW(
-    #     segmentation_encoder_model.parameters(),
-    #     lr=args_train.segmentation_encoder_lr,
-    #     betas=(0.9, 0.999),
-    #     eps=1e-8,
-    #     weight_decay= 1e-4
-    # )
-
     if args_train.lr_scheduler is not None:
         if args_train.lr_scheduler.name == "PolynomialLR":
             lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(
@@ -1130,17 +1118,6 @@ def train(
                 eta_min=args_train.lr_scheduler.eta_min,
             )
 
-    # if args_train.lr_scheduler_segmentation_encoder is not None:
-    #     if args_train.lr_scheduler_segmentation_encoder.name == "PolynomialLR":
-    #         lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.PolynomialLR(optimizer_segmentation_encoder, total_iters=args_train.max_train_steps, power=args_train.lr_scheduler_segmentation_encoder.power)
-    #     elif args_train.lr_scheduler_segmentation_encoder.name == "CosineAnnealingLR":
-    #         lr_scheduler_segmentation_encoder = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_segmentation_encoder, T_max=args_train.max_train_steps, eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
-    #     elif args_train.lr_scheduler_segmentation_encoder.name == "WarmupCosineLR":
-    #         lr_scheduler_segmentation_encoder = create_warmup_cosine_scheduler(optimizer_segmentation_encoder,
-    #                                                                            warmup_start_factor=args_train.lr_scheduler_segmentation_encoder.warmup_start_factor,
-    #                                                                            warmup_steps=args_train.lr_scheduler_segmentation_encoder.warmup_steps,
-    #                                                                            max_train_steps=args_train.max_train_steps,
-    #                                                                            eta_min=args_train.lr_scheduler_segmentation_encoder.eta_min)
 
     else:
         lr_scheduler = None
@@ -1278,11 +1255,22 @@ def train(
                     condition_resolution_idx
                 )
 
-                # if batch['modality'][0] == "T1W":
-                # print("-"*10, "Modality embedding", "-"*10)
-                # print(f"modality: \n {batch['modality']} \n {batch['modality_idx']} \n {modality_embedding[:,::50]}")
-                # print("-"*10, "Resolution embedding", "-"*10)
-                # print(f"resolution: \n {batch['resolution']} \n {batch['resolution_idx']} \n {resolution_embedding[:,::50]}")
+                # free_guidance_prob = torch.rand(1, generator=gen_free_guidance).item()
+                # if free_guidance_prob < args_train.free_guidance_threshold:
+                #     modality_embedding = torch.zeros_like(modality_embedding)
+                #     resolution_embedding = torch.zeros_like(resolution_embedding)
+                #     segmentation = torch.zeros_like(segmentation)
+                #     latents_synthsr = torch.zeros_like(latents_synthsr)
+                
+                if args_train.free_guidance_threshold is not None and args_train.free_guidance_threshold > 0:
+                    B = modality_embedding.shape[0]
+                    drop_mask = (torch.rand(B, generator=gen_free_guidance)< args_train.free_guidance_threshold).to(device)
+                    cond_mask = (~drop_mask).float().view(B,1,1,1,1)
+                    segmentation = segmentation * cond_mask
+                    latents_synthsr = latents_synthsr * cond_mask
+                    # segmentation *= (1 - drop_mask).view(B, 1, 1, 1, 1)
+                    # latents_synthsr *= (1 - drop_mask).view(B, 1, 1, 1, 1)
+
 
                 model_output = unet(
                     torch.cat([noisy_latent, segmentation, latents_synthsr], dim=1),
@@ -1500,12 +1488,12 @@ def train(
 
 args_train = {
     # directories
-    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test1_merged3_4res_probseg",
+    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test2_merged3_4res_probseg_nofgr_combined_data",
     "checkpoints_dir_name": "check_points",
     "logs_dir_name": "logs",
     "val_imgs_dir_name": "val_imgs",
     # data
-    "df_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data.csv",
+    "df_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data_combined.csv",
     # training configuration
     "max_train_steps": 500000,
     "save_checkpoint_interval": 5000,  # 10000,
@@ -1516,8 +1504,8 @@ args_train = {
     "gradient_accumulation_steps": 1,
     "use_ema": True,
     "ema_params": {
-        "decay": 0.999,
-        "warm_up_steps": 50000,
+        "decay": 0.9,
+        "warm_up_steps": 100000,
         "warm_up_decay": 0.3,
     },
     # ---- optimizer
@@ -1539,16 +1527,14 @@ args_train = {
     # "lr_scheduler": {"name": "WarmupCosineLR", "warmup_start_factor": 1e-2, "warmup_steps": 25, "eta_min": 1e-6},
     # ---- pretrained_model
     # "load_pretrained_model_from": "/home/agustin/phd/synthesis/tests/D3/maisi/understanding_training/no_synthsr/aaco5590_dataset_no_outliers_bfc/models/rflow/check_points/model_200000.pt",
-    # "load_pretrained_model_from": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_20.pt",
-    "load_pretrained_model_from": None,  # not working
-    # ---- resume from checkpoint
-    # "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/test1/check_points/model_70000.pt",
-    "resume_from_checkpoint_path_name": None,  # not working
+    "load_pretrained_model_from": None,
+    "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test2_merged3_4res_probseg_fgr_combined_data/check_points/model_70000.pt",  
+    # "resume_from_checkpoint_path_name": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test1_merged3_4res_probseg/check_points/model_100000.pt",  # not working
     # reproducibility
     "seed": 42,
     # validation
-    "val_interval": 1000,
-    "initial_val": True,  # remember drop out
+    "val_interval": 2500,
+    "initial_val": False,  # remember drop out
     # "validation_first": True, # if True, the model will be validated before the first training step, if False, the model will be validated after the first training step
     "val_seeds": [42],  # [0,12357], # seeds for the noise generation during validation
     "max_val_subjects": None,  # max number of subjects to be generated during validation, set to None to use all the subjects in the val dataloader
@@ -1560,7 +1546,7 @@ args_train = {
     # "specialized_index": 1, # None for random, 0 for t1n, 1 for t1c, 2 for t2w, 3 for t2f
     "used_modalities": ["T1W", "T2W", "T2FLAIR"],  # "T1W", "T2W", "T2FLAIR"
     # "used_resolutions": [1.5, 3, 5, 7], #0.1, 1.5, 3, 5, 7
-    "used_resolutions": [1.5, 3, 5, 7],  # 0.1, 1.5, 3, 5, 7
+    "used_resolutions": [0.1, 1.5, 3, 5, 7],  # 0.1, 1.5, 3, 5, 7
     # "used_resolutions": [3, 5, 7], #0.1, 1.5, 3, 5, 7
     # "identity_allowed": True, # if True, the model can learn the identity function, if False, the model has to learn the conversion
     "loss_weights": {
@@ -1573,7 +1559,8 @@ args_train = {
     "nb_seg_classes": 3,  # number of segmentation classes including the background, used for the one hot encoding of the segmentation maps
     "used_pondered_segmentation": True,  # if True, the segmentation maps are pondered by the distance to the borders of the structures, if False, the segmentation maps are one hot encoded without pondering
 
-    "latent_synthsr_prob": 4/5
+    "latent_synthsr_prob": None,
+    "free_guidance_threshold": None
 }
 
 

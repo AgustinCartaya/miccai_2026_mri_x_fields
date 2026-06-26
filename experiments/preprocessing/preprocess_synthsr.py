@@ -66,7 +66,7 @@ def process_row(index, row, base_output_path):
                 output_path_name,
                 verify=True,
                 verbose=False,
-                nearest=True
+                # nearest=True
             )
 
             try:

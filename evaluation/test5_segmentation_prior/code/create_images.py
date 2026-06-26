@@ -58,7 +58,7 @@ from PIL import Image
 sys.path.append("/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/utils")
 from autoencoder_declaration import AutoencoderPrediction
 
-device_name = f"cuda:3"
+device_name = f"cuda:1"
 device = torch.device(device_name)
 
 
@@ -707,56 +707,47 @@ def evaluate_task3(
             nfc.save_nifti(synthetic_image, org_aff, save_path_name)
             bar.update(1)
 
-            # break
+        #     break
         # break
 
     bar.close()
 
 
 if __name__ == "__main__":
-    df_val = pd.read_csv(
-        "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/val_data.csv"
-    )
-    output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/val_ema"
-
     # df_val = pd.read_csv(
-    #     "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data.csv"
+    #     "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/val_data.csv"
     # )
-    # df_val = df_val[df_val["split"] == "val"]
-    # output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/train"
+    # output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/val_ema"
+
+    df_val = pd.read_csv(
+        "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data.csv"
+    )
+    df_val = df_val[df_val["split"] == "val"]
+    output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_prior/results/train"
 
     use_controlnet = False
 
-    dm_chk_number = 145000
+    dm_chk_number = 200000
     n_inference_steps = 30
-    dm_seg_channels = 8
+    dm_seg_channels = 3
     used_mask = f"merged_{dm_seg_channels}"
 
-    # dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test1/check_points/model_{dm_chk_number}.pt"
-    dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test3_merged8_4res/check_points/model_{dm_chk_number}.pt"
+    dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test1/check_points/model_{dm_chk_number}.pt"
+    # dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test3_merged8_4res/check_points/model_{dm_chk_number}.pt"
     # dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated/test3_merged8_4res_probseg/check_points/model_{dm_chk_number}.pt"
 
     if not use_controlnet:
-        output_path = os.path.join(
-            output_path,
-            f"basic",
-            used_mask,
-            f"chk_{dm_chk_number}_steps_{n_inference_steps}",
-        )
+        output_path = os.path.join(output_path, f"basic", used_mask, f"chk_{dm_chk_number}_steps_{n_inference_steps}")
     else:
         # dm_chk_number = 210000
         cnet_chk_number = 100000
         controlnet_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_controlnet/test1/check_points/model_{cnet_chk_number}.pt"
-        output_path = os.path.join(
-            output_path,
-            f"controlnet",
-            f"chk_{dm_chk_number}_cnchk_{cnet_chk_number}_steps_{n_inference_steps}",
-        )
+        output_path = os.path.join(output_path, f"controlnet", f"chk_{dm_chk_number}_cnchk_{cnet_chk_number}_steps_{n_inference_steps}")
         # raise NotImplementedError("ControlNet is not implemented yet for the evaluation, but it will be in the future. For now, just set use_controlnet to False if you want to run the evaluation.")
 
     used_modalities = ["T1W", "T2W", "T2FLAIR"]  # "T1W", "T2W", "T2FLAIR"
     used_resolutions = [0.1, 1.5, 3, 5, 7]  # 0.1, 1.5, 3, 5, 7
-    dm_tar_resolution_offset = 1  # this is the offset that we will apply to the target resolution index when feeding it to the model, because during training we only used 3 resolutions (0.1, 1.5 and 3), so the target resolution index for 1.5T during training was 0, for 3T was 1 and for 5T was 2. Now, during inference, we want to be able to use the model to generate images for all the resolutions, so we will apply an offset to the target resolution index to match the indices that were used during training. For example, if we want to generate an image for 7T, which has an index of 4 in our current setup, we will apply an offset of 2 to get an index of 2, which is the index that was used during training for 5T.
+    dm_tar_resolution_offset = 2  # this is the offset that we will apply to the target resolution index when feeding it to the model, because during training we only used 3 resolutions (0.1, 1.5 and 3), so the target resolution index for 1.5T during training was 0, for 3T was 1 and for 5T was 2. Now, during inference, we want to be able to use the model to generate images for all the resolutions, so we will apply an offset to the target resolution index to match the indices that were used during training. For example, if we want to generate an image for 7T, which has an index of 4 in our current setup, we will apply an offset of 2 to get an index of 2, which is the index that was used during training for 5T.
 
     modality_idx_mapping = {
         modality: idx for idx, modality in enumerate(used_modalities)
@@ -768,6 +759,10 @@ if __name__ == "__main__":
     # map modality to index
     df_val["modality_idx"] = df_val["modality"].map(modality_idx_mapping)
     df_val["resolution_idx"] = df_val["resolution"].map(resolution_idx_mapping)
+
+    df_val = df_val[
+        df_val["modality"].isin(["T1W"]) & df_val["resolution"].isin([1.5]) & df_val["sid"].isin(["S0006"]) 
+    ] 
 
     models_dict = instantiate_unconditioned_models(
         device,

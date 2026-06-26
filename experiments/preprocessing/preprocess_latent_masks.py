@@ -115,7 +115,8 @@ def process_row(index, row, base_output_path, unique_modality, unique_resolution
         seg, aff = nfc.load_nifti(seg_path)
 
         if merge_dict is None:
-            seg = ufs.merge_seg36_to_seg3(seg)
+            # seg = ufs.merge_seg36_to_seg3(seg)
+            seg = ufs.merge_seg96_to_seg3(seg)
         else:
             seg = ufs.merge_segmentation(seg, merge_dict)
 
@@ -142,7 +143,7 @@ def preprocess_supersynth(split, unique_modality=None, unique_resolution=None, m
 
     seg_paths = [None] * len(df)
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=32) as executor:
         futures = [
             executor.submit(
                 process_row,
@@ -182,4 +183,5 @@ if __name__ == "__main__":
 
 
 
-    preprocess_supersynth(split="val", unique_modality=None, unique_resolution=None, merge_dict=mapping_dict_8, merge_name="merged_8", segmentation_algorithm="supersynth")
+    # preprocess_supersynth(split="val", unique_modality=None, unique_resolution=None, merge_dict=mapping_dict_8, merge_name="merged_8", segmentation_algorithm="supersynth")
+    preprocess_supersynth(split="claras", unique_modality=None, unique_resolution=None, merge_dict=None, merge_name="merged_3", segmentation_algorithm="synthseg")

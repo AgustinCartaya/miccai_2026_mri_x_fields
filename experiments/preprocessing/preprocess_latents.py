@@ -17,7 +17,7 @@ import torch
 from autoencoder_declaration import AutoencoderPrediction
 
 
-device_name = f"cuda:2"
+device_name = f"cuda:3"
 device = torch.device(device_name)
 
 
@@ -57,6 +57,7 @@ def preprocess_latents(split="train"):
         # verify if latent already exists        
         if os.path.exists(output_latent_path_name):
             print(f"Skipping {subject_id} {resolution}T {modality}, latent already exists")
+            bar.update(1)
             continue
 
         img, aff =  nfc.load_nifti(img_path)
@@ -79,5 +80,5 @@ def preprocess_latents(split="train"):
 
 if __name__ == "__main__":
     # preprocess_latents(split="train")
-    preprocess_latents(split="val")
+    preprocess_latents(split="claras")
     # preprocess_latents(split="pr_train")

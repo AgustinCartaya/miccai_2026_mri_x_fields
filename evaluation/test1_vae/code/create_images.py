@@ -50,7 +50,7 @@ from PIL import Image
 sys.path.append("/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/utils")
 from autoencoder_declaration import AutoencoderPrediction
 
-device_name = f"cuda:3"
+device_name = f"cuda:1"
 device = torch.device(device_name)
 
 
@@ -71,7 +71,7 @@ def validation(
     autoencoder,
 ):
 
-    latents = autoencoder.encode(src_image)
+    latents = autoencoder.encode(src_image, seed=42)
     synthetic_images = autoencoder.decode(latents)
 
     # clip the values to the range [0, 1]
@@ -152,8 +152,9 @@ if __name__ == "__main__":
         "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data.csv"
     )
     df_val = df_val[df_val["split"] == "val"]
-    output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test1_vae/results/rec"
+    output_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test1_vae/results/rec_deterministic_seed42"
 
+    df_val = df_val[(df_val["modality"] == "T1W") & (df_val["resolution"] == 3)]
     autoencoder_chekpoint_path = "/home/agustin/phd/synthesis/tests/D3/maisi/understanding_vae/vae_weights/autoencoder_epoch273.pt"
     autoencoder = AutoencoderPrediction(autoencoder_chekpoint_path, device, half=True)
     
