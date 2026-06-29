@@ -152,8 +152,8 @@ def instantiate_unconditioned_models(
         "vcm_unet_def": {
             "_target_": "monai.apps.generation.maisi.networks.diffusion_model_unet_maisi.DiffusionModelUNetMaisi",
             "spatial_dims": 3,
-            # "in_channels": 4 + 4 + 4*3,
-            "in_channels": 4 + 4,
+            "in_channels": 4 + 4 + 4*3,
+            # "in_channels": 4 + 4,
             "out_channels": 4,
             "num_res_blocks": 2,
             "num_channels": [
@@ -608,9 +608,9 @@ class PrepareDataset(Dataset):
         example["src_org_img_path"] = instance[modality][src_resolution]["org_img_path"]
         example["tar_org_img_path"] = instance[modality][tar_resolution]["org_img_path"]
 
-        # example["src_t1w_latent"] = torch.from_numpy(np.load(instance["T1W"][src_resolution]["latent_path"]))
-        # example["src_t2w_latent"] = torch.from_numpy(np.load(instance["T2W"][src_resolution]["latent_path"]))
-        # example["src_flair_latent"] = torch.from_numpy(np.load(instance["T2FLAIR"][src_resolution]["latent_path"]))
+        example["src_t1w_latent"] = torch.from_numpy(np.load(instance["T1W"][src_resolution]["latent_path"]))
+        example["src_t2w_latent"] = torch.from_numpy(np.load(instance["T2W"][src_resolution]["latent_path"]))
+        example["src_flair_latent"] = torch.from_numpy(np.load(instance["T2FLAIR"][src_resolution]["latent_path"]))
 
         load_latent_synthsr = True
         # generate a random number between 0 and 1 using the latent_synthsr_generator
@@ -666,17 +666,17 @@ def collate_fn(examples):
     # src_latent = src_latent.to(memory_format=torch.contiguous_format).float()
     # res_dict["src_latent"] = src_latent
 
-    # src_t1w_latent = torch.stack([example["src_t1w_latent"] for example in examples])
-    # src_t1w_latent = src_t1w_latent.to(memory_format=torch.contiguous_format).float()
-    # res_dict["src_t1w_latent"] = src_t1w_latent
+    src_t1w_latent = torch.stack([example["src_t1w_latent"] for example in examples])
+    src_t1w_latent = src_t1w_latent.to(memory_format=torch.contiguous_format).float()
+    res_dict["src_t1w_latent"] = src_t1w_latent
 
-    # src_t2w_latent = torch.stack([example["src_t2w_latent"] for example in examples])
-    # src_t2w_latent = src_t2w_latent.to(memory_format=torch.contiguous_format).float()
-    # res_dict["src_t2w_latent"] = src_t2w_latent
+    src_t2w_latent = torch.stack([example["src_t2w_latent"] for example in examples])
+    src_t2w_latent = src_t2w_latent.to(memory_format=torch.contiguous_format).float()
+    res_dict["src_t2w_latent"] = src_t2w_latent
 
-    # src_flair_latent = torch.stack([example["src_flair_latent"] for example in examples])
-    # src_flair_latent = src_flair_latent.to(memory_format=torch.contiguous_format).float()
-    # res_dict["src_flair_latent"] = src_flair_latent
+    src_flair_latent = torch.stack([example["src_flair_latent"] for example in examples])
+    src_flair_latent = src_flair_latent.to(memory_format=torch.contiguous_format).float()
+    res_dict["src_flair_latent"] = src_flair_latent
 
     tar_latent = torch.stack([example["tar_latent"] for example in examples])
     tar_latent = tar_latent.to(memory_format=torch.contiguous_format).float()
@@ -812,9 +812,9 @@ def validation(
             gen_randn = torch.Generator().manual_seed(seed) 
             latents = torch.randn(_l_shape, generator=gen_randn).half().to(device)
 
-            # src_t1w_latents = batch["src_t1w_latent"].to(device)
-            # src_t2w_latents = batch["src_t2w_latent"].to(device)
-            # src_flair_latents = batch["src_flair_latent"].to(device)
+            src_t1w_latents = batch["src_t1w_latent"].to(device)
+            src_t2w_latents = batch["src_t2w_latent"].to(device)
+            src_flair_latents = batch["src_flair_latent"].to(device)
 
 
             # tar_latents = batch["tar_latent"].to(device)
@@ -859,8 +859,8 @@ def validation(
                     )
 
                     gamma_t, beta_t = vcm_model(
-                        torch.cat([latents, model_output], dim=1),
-                        # torch.cat([latents, model_output, src_t1w_latents, src_t2w_latents, src_flair_latents], dim=1),
+                        # torch.cat([latents, model_output], dim=1),
+                        torch.cat([latents, model_output, src_t1w_latents, src_t2w_latents, src_flair_latents], dim=1),
                         timesteps=timesteps,
                         #   context = volumetric_embedding,
                         # mask_features = segmentation_embedding,
@@ -1316,9 +1316,9 @@ def train(
             src_latents_synthsr = batch["src_latent_synthsr"].to(device)
 
             # for the VCM
-            # src_t1w_latent = batch["src_t1w_latent"].to(device)
-            # src_t2w_latent = batch["src_t2w_latent"].to(device)
-            # src_flair_latent = batch["src_flair_latent"].to(device)
+            src_t1w_latent = batch["src_t1w_latent"].to(device)
+            src_t2w_latent = batch["src_t2w_latent"].to(device)
+            src_flair_latent = batch["src_flair_latent"].to(device)
             src_condition_resolution_idx = batch["src_resolution_idx"].to(device)
 
             # Forward pass
@@ -1348,8 +1348,8 @@ def train(
                     )
 
                 gamma_t, beta_t = vcm_model(
-                    torch.cat([noisy_latent, model_output], dim=1),
-                    # torch.cat([noisy_latent, model_output, src_t1w_latent, src_t2w_latent, src_flair_latent], dim=1),
+                    # torch.cat([noisy_latent, model_output], dim=1),
+                    torch.cat([noisy_latent, model_output, src_t1w_latent, src_t2w_latent, src_flair_latent], dim=1),
                     timesteps=timesteps,
                     #   context = volumetric_embedding,
                     # mask_features = segmentation_embedding,
@@ -1565,7 +1565,7 @@ def train(
 
 args_train = {
     # directories
-    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test8_patch_refinement/training/models/segconcatenated_synthsr_mod_res_prior_vcm/test3_3",
+    "output_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test8_patch_refinement/training/models/segconcatenated_synthsr_mod_res_prior_vcm/test4",
     "checkpoints_dir_name": "check_points",
     "logs_dir_name": "logs",
     "val_imgs_dir_name": "val_imgs",
@@ -1575,7 +1575,7 @@ args_train = {
     "df_path_val": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/data/csv/train_data.csv",
     
     # training configuration
-    "max_train_steps": 10000,
+    "max_train_steps": 25000,
     "save_checkpoint_interval": 5000,  # 10000,
     # ---- memory reduction
     "amp": True,
@@ -1645,7 +1645,7 @@ args_train = {
     "latent_synthsr_prob": None,
     "free_guidance_threshold": None,
 
-    "pretrained_models_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test2_merged3_4res_probseg_nofgr_combined_data/check_points/model_145000.pt",
+    "pretrained_models_path": "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test2_merged3_4res_probseg_nofgr_combined_data/check_points/model_280000.pt",
 }
 
 

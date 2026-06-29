@@ -140,4 +140,4 @@ def preprocess_supersynth(split="train", num_workers=4):
     
 
 if __name__ == "__main__":
-    preprocess_supersynth(split="train")
+    preprocess_supersynth(split="paired_train")

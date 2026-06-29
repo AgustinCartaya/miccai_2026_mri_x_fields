@@ -6,6 +6,8 @@ import sys
 
 sys.path.append('/home/agustin/phd/synthesis')
 import utils.nifti_functions as nfc
+import utils.util as util
+
 
 Z_CLIP_RANGE = (150, 180)
 
@@ -22,6 +24,9 @@ def process_file(src_file: Path, src_root: Path, dst_root: Path,
     dst_file.parent.mkdir(parents=True, exist_ok=True)
 
     img, aff = nfc.load_nifti(str(src_file))
+    # print(f"min: {img.min()}, max: {img.max()}, mean: {img.mean()}, std: {img.std()}")
+    # img = util.robust_normalize(img)
+    # print(f"min: {img.min()}, max: {img.max()}, mean: {img.mean()}, std: {img.std()}")
 
     z_start, z_end = z_clip_range
     cropped_data = img[:, :, z_start:z_end]
@@ -66,7 +71,7 @@ def crop_z_slices(src_root: Path,
 
 
 if __name__ == "__main__":
-    input_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_synthsr_prior/results/val/basic/merged_3/chk_140000_steps_30/with_synthsr/task2"
+    input_path = "/home/agustin/phd/miccai/miccai_2026/mri_x_fields/evaluation/test5_segmentation_synthsr_prior/results/val/basic/merged_3/chk_280000_steps_30/with_synthsr/task3_postprocessed"
     output_path = input_path + "_zclipped"
     src_root = Path(input_path)
     dst_root = Path(output_path)

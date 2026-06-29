@@ -670,8 +670,8 @@ def evaluate_task3(
     # df_val_task3 = df_val[df_val["resolution"] == 0.1]
     df_val_task3 = df_val.copy()
 
-    desired_resolution_list = [1.5, 3, 5, 7]
-    desired_resolution_idx_list = [1, 2, 3, 4]
+    desired_resolution_list = [0.1, 1.5, 3, 5, 7]
+    desired_resolution_idx_list = [0, 1, 2, 3, 4]
 
     # desired_resolution_list = [3, 5, 7]
     # desired_resolution_idx_list = [2, 3, 4]
@@ -692,6 +692,9 @@ def evaluate_task3(
                 continue
 
             modality = row["modality"]
+            # if modality not in ["T1W"]:
+            #     print(f"Skipping modality {modality} for Task 3, only T1W is allowed")
+            #     continue
             src_resolution = row["resolution"]
             iid = row["iid"]
             modality_idx = row["modality_idx"]
@@ -701,7 +704,7 @@ def evaluate_task3(
             src_latent_synthsr_path = row[f"latent_synthsr_path"]
 
             # load always T1W seg and synthsr for 0.1 tesla T2w and flair
-            if src_resolution == 0.1 and modality in ["T2W", "T2FLAIR"]:
+            if src_resolution == 0.1 and modality in ["T2FLAIR"]:
                 src_latent_mask_path = row[f"latent_seg_supersynth_merged_{dm_seg_channels}_path"].replace(modality, "T1W")
                 src_latent_synthsr_path = row[f"latent_synthsr_path"].replace(modality, "T1W")
                 print(f"Using T1W latent mask and synthsr for {modality} at 0.1T")
@@ -786,7 +789,7 @@ if __name__ == "__main__":
     use_controlnet = False
     use_synthsr = True
 
-    dm_chk_number = 140000
+    dm_chk_number = 280000
     n_inference_steps = 30
     cut_step = None
 
@@ -794,7 +797,7 @@ if __name__ == "__main__":
     used_mask = f"merged_{dm_seg_channels}"
 
     # dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test1_merged3_4res_probseg/check_points/model_{dm_chk_number}.pt"
-    dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test1_merged3_4res_probseg/check_points/model_{dm_chk_number}_best.pt"
+    dm_chk_path = f"/home/agustin/phd/miccai/miccai_2026/mri_x_fields/experiments/test5_segmentation_prior/training/models/all_357t/segconcatenated_synthsr/test2_merged3_4res_probseg_nofgr_combined_data/check_points/model_{dm_chk_number}.pt"
 
     if not use_controlnet:
         output_path = os.path.join(output_path, f"basic", used_mask, f"chk_{dm_chk_number}_steps_{n_inference_steps}")
@@ -816,7 +819,7 @@ if __name__ == "__main__":
 
     used_modalities = ["T1W", "T2W", "T2FLAIR"]  # "T1W", "T2W", "T2FLAIR"
     used_resolutions = [0.1, 1.5, 3, 5, 7]  # 0.1, 1.5, 3, 5, 7
-    dm_tar_resolution_offset = 1  # this is the offset that we will apply to the target resolution index when feeding it to the model, because during training we only used 3 resolutions (0.1, 1.5 and 3), so the target resolution index for 1.5T during training was 0, for 3T was 1 and for 5T was 2. Now, during inference, we want to be able to use the model to generate images for all the resolutions, so we will apply an offset to the target resolution index to match the indices that were used during training. For example, if we want to generate an image for 7T, which has an index of 4 in our current setup, we will apply an offset of 2 to get an index of 2, which is the index that was used during training for 5T.
+    dm_tar_resolution_offset = 0  # this is the offset that we will apply to the target resolution index when feeding it to the model, because during training we only used 3 resolutions (0.1, 1.5 and 3), so the target resolution index for 1.5T during training was 0, for 3T was 1 and for 5T was 2. Now, during inference, we want to be able to use the model to generate images for all the resolutions, so we will apply an offset to the target resolution index to match the indices that were used during training. For example, if we want to generate an image for 7T, which has an index of 4 in our current setup, we will apply an offset of 2 to get an index of 2, which is the index that was used during training for 5T.
 
     modality_idx_mapping = {
         modality: idx for idx, modality in enumerate(used_modalities)
@@ -846,30 +849,7 @@ if __name__ == "__main__":
         num_inference_steps=n_inference_steps,
     )
 
-    evaluate_task1(
-        df_val,
-        output_path,
-        models=models_dict,
-        dm_seg_channels=dm_seg_channels,
-        use_controlnet=use_controlnet,
-        tar_resolution_offset=dm_tar_resolution_offset,
-        use_synthsr=use_synthsr,
-        cut_step=cut_step
-    )
-
-    evaluate_task2(
-        df_val,
-        output_path,
-        models=models_dict,
-        dm_seg_channels=dm_seg_channels,
-        use_controlnet=use_controlnet,
-        tar_resolution_offset=dm_tar_resolution_offset,
-        use_synthsr=use_synthsr,
-        cut_step=cut_step
-    )
-
-
-    # evaluate_task3(
+    # evaluate_task1(
     #     df_val,
     #     output_path,
     #     models=models_dict,
@@ -879,3 +859,26 @@ if __name__ == "__main__":
     #     use_synthsr=use_synthsr,
     #     cut_step=cut_step
     # )
+
+    # evaluate_task2(
+    #     df_val,
+    #     output_path,
+    #     models=models_dict,
+    #     dm_seg_channels=dm_seg_channels,
+    #     use_controlnet=use_controlnet,
+    #     tar_resolution_offset=dm_tar_resolution_offset,
+    #     use_synthsr=use_synthsr,
+    #     cut_step=cut_step
+    # )
+
+
+    evaluate_task3(
+        df_val,
+        output_path,
+        models=models_dict,
+        dm_seg_channels=dm_seg_channels,
+        use_controlnet=use_controlnet,
+        tar_resolution_offset=dm_tar_resolution_offset,
+        use_synthsr=use_synthsr,
+        cut_step=cut_step
+    )

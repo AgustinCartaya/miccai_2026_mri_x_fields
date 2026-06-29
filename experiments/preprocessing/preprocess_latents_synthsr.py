@@ -96,5 +96,5 @@ def preprocess_latents(split="train", decode_first=False):
 if __name__ == "__main__":
     # preprocess_latents(split="train")
     # preprocess_latents(split="val")
-    preprocess_latents(split="train", decode_first=True)
+    preprocess_latents(split="val", decode_first=True)
     #REMEMBER TO CHANGE THE FOLDER NAME OF PR_TRAIN_DATA TO TRAIN_DATA
